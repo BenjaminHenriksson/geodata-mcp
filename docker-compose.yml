@@ -1,0 +1,107 @@
+name: geodata-mcp-v2
+
+services:
+  postgres:
+    build: ./db
+    environment:
+      POSTGRES_DB: geodata
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: geodata_dev
+    command: >
+      postgres -c shared_preload_libraries=pgaudit
+               -c max_connections=120
+               -c shared_buffers=512MB
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d geodata"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: geodata
+      MINIO_ROOT_PASSWORD: geodata_dev_minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mcp:
+    build: ./services/mcp
+    environment: &appenv
+      DATABASE_URL_APP: postgresql://geodata_app:geodata_app@postgres:5432/geodata
+      DATABASE_URL_RO: postgresql://agent_ro:agent_ro@postgres:5432/geodata
+      DATABASE_URL_WS: postgresql://agent_ws:agent_ws@postgres:5432/geodata
+      PUBLIC_BASE_URL: http://localhost:8080
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_BUCKET: exports
+      MINIO_ROOT_USER: geodata
+      MINIO_ROOT_PASSWORD: geodata_dev_minio
+      EMBED_URL: http://worker:8100/embed
+      EMBED_MODEL: unsloth/embeddinggemma-300m
+      EMBED_DIM: "256"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build: ./services/worker
+    environment: *appenv
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  viewer:
+    build: ./services/viewer
+    environment: *appenv
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8001/healthz', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - mcp
+      - viewer
+
+volumes:
+  pgdata:
+  minio-data:
+  hf-cache:

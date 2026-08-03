@@ -1,0 +1,14 @@
+:80 {
+	handle /mcp* {
+		reverse_proxy mcp:8000 {
+			lb_try_duration 10s
+			lb_try_interval 500ms
+		}
+	}
+	handle {
+		reverse_proxy viewer:8001 {
+			lb_try_duration 10s
+			lb_try_interval 500ms
+		}
+	}
+}
