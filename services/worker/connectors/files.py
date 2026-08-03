@@ -129,12 +129,55 @@ def _create_address_view(cur, schema: str, table: str) -> None:
     log.info("created app.address_points over %s.%s (columns: %s)", schema, table, cols)
 
 
+def repair_geometries(cur, schema: str, table: str) -> int:
+    """Make invalid geometries valid, returning how many were repaired.
+
+    Municipal planning polygons routinely arrive self-intersecting. PostGIS tolerates
+    that for ST_Area, but ST_Intersects / ST_Union / ST_Intersection raise
+    TopologyException — i.e. the ordinary spatial joins this system exists to run would
+    fail on the detaljplan layers. Repairing at ingest is recorded in provenance and in
+    the dataset's schema_summary, so a repaired layer is never silently presented as
+    pristine source data.
+    """
+    tbl = dbutil.qualify(schema, table)
+    cur.execute(sql.SQL("SELECT count(*) AS n FROM {} WHERE geom IS NOT NULL AND NOT ST_IsValid(geom)")
+                .format(tbl))
+    invalid = int(cur.fetchone()["n"])
+    if not invalid:
+        return 0
+
+    # Keep only parts of the repaired result matching the layer's own dimension, so a
+    # self-intersecting polygon cannot decay into stray lines/points.
+    cur.execute(sql.SQL("SELECT GeometryType(geom) AS t FROM {} WHERE geom IS NOT NULL LIMIT 1")
+                .format(tbl))
+    row = cur.fetchone()
+    gtype = (row["t"] or "").upper() if row else ""
+    dim = 1 if "POINT" in gtype else 2 if "LINE" in gtype else 3
+
+    cur.execute(
+        sql.SQL("UPDATE {} SET geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), %s)) "
+                "WHERE geom IS NOT NULL AND NOT ST_IsValid(geom)").format(tbl),
+        (dim,),
+    )
+    cur.execute(sql.SQL("SELECT count(*) AS n FROM {} WHERE geom IS NOT NULL AND NOT ST_IsValid(geom)")
+                .format(tbl))
+    still_bad = int(cur.fetchone()["n"])
+    log.warning("repaired %d invalid geometries in %s.%s (%d still invalid)",
+                invalid - still_bad, schema, table, still_bad)
+    return invalid - still_bad
+
+
 def finalize_load(conn, job, schema: str, table: str, dataset_id=None, details=None) -> dict:
     """Post-ogr2ogr bookkeeping shared by ingest_wfs and ingest_file."""
     with conn.cursor() as cur:
+        repaired = repair_geometries(cur, schema, table)
         dbutil.analyze(cur, schema, table)
         feature_count = dbutil.count_rows(cur, schema, table)
         summary = dbutil.table_schema_summary(cur, schema, table)
+        if repaired:
+            summary["geometries_repaired"] = repaired
+            details = dict(details or {})
+            details["geometries_repaired"] = repaired
 
         if dataset_id is not None:
             if schema == "ref":
@@ -177,7 +220,10 @@ def finalize_load(conn, job, schema: str, table: str, dataset_id=None, details=N
         if "adressplats" in table:
             _create_address_view(cur, schema, table)
 
-    return {"table": f"{schema}.{table}", "feature_count": feature_count}
+    out = {"table": f"{schema}.{table}", "feature_count": feature_count}
+    if repaired:
+        out["geometries_repaired"] = repaired
+    return out
 
 
 def _safe_filename(url_or_path: str) -> str:
