@@ -199,12 +199,19 @@ def update(session_id: str, name: str, key_column: str, values: dict) -> dict:
 
 def style(session_id: str, name: str, style: dict | None = None, popup: list | None = None,
           label: str | None = None, visible: bool | None = None, notes: str | None = None) -> dict:
-    if not name or not sqlguard.LAYER_NAME_RE.match(name):
-        return {"error": "layer name must match ^[a-z][a-z0-9_]{0,59}$"}
     ws = sessions.ws_schema_for(session_id)
     sessions.touch_session(session_id)
-    _upsert_meta(ws, name, style=style, notes=notes, popup=popup, label=label, visible=visible)
-    return {"table": f"{ws}.{name}", "style": style, "popup": popup, "label": label,
+    # Styling/annotating shared ref layers is legitimate (they are read-only open data,
+    # and layer_meta is presentation metadata, not the data itself), so accept an
+    # explicit 'ref.<table>' here as well as a bare name in the caller's own workspace.
+    schema = ws
+    if name and name.startswith("ref."):
+        schema, name = "ref", name[4:]
+    if not name or not sqlguard.LAYER_NAME_RE.match(name):
+        return {"error": "layer name must match ^[a-z][a-z0-9_]{0,59}$ "
+                         "(or be 'ref.<table>' for a shared reference layer)"}
+    _upsert_meta(schema, name, style=style, notes=notes, popup=popup, label=label, visible=visible)
+    return {"table": f"{schema}.{name}", "style": style, "popup": popup, "label": label,
             "visible": visible}
 
 

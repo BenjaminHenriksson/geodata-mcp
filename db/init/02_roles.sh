@@ -14,6 +14,9 @@ psql -v ON_ERROR_STOP=1 \
 -- Service role: owns all app-managed schemas, used by mcp/worker/viewer control planes.
 CREATE ROLE geodata_app LOGIN PASSWORD :'app_pw';
 GRANT CREATE ON DATABASE geodata TO geodata_app;
+-- Control-plane queries (viewer tiles/GeoJSON, catalog reads) must not run unbounded
+-- either. Generous, because ingest jobs legitimately run long — those raise it per session.
+ALTER ROLE geodata_app SET statement_timeout = '120s';
 
 -- Agent read path (the `query` tool).
 CREATE ROLE agent_ro LOGIN PASSWORD :'ro_pw';

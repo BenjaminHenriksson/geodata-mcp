@@ -19,18 +19,24 @@ WMS_REF_RE = re.compile(
 )
 BASEMAPS = ("positron", "osm", "none")
 STYLE_KEYS = ("fill", "stroke", "opacity", "circle", "width")
+# The architecture's own map-spec example uses `color` for point fill and `radius`
+# for size; accept them rather than dropping them silently.
+STYLE_ALIASES = {"color": "fill", "radius": "circle", "line-width": "width",
+                 "fill-opacity": "opacity"}
 
 
-def _normalize_layers(layers, ws: str) -> tuple[list[dict] | None, str | None]:
+def _normalize_layers(layers, ws: str) -> tuple[list[dict] | None, str | None, list[str]]:
+    """Returns (clean_layers, error, warnings). Warnings surface silently-ignored input."""
+    warnings: list[str] = []
     if not isinstance(layers, list) or not layers:
-        return None, "layers must be a non-empty list of {'ref': 'schema.table', ...} entries"
+        return None, "layers must be a non-empty list of {'ref': 'schema.table', ...} entries", warnings
     out = []
     with db.app_pool().connection() as conn:
         for entry in layers:
             if isinstance(entry, str):
                 entry = {"ref": entry}
             if not isinstance(entry, dict) or "ref" not in entry:
-                return None, "each layer entry needs a 'ref' (e.g. 'ref.strandskydd' or 'ws_x.mylayer')"
+                return None, "each layer entry needs a 'ref' (e.g. 'ref.strandskydd' or 'ws_x.mylayer')", warnings
             ref = str(entry["ref"])
             wms = WMS_REF_RE.match(ref)
             if wms:
@@ -39,28 +45,36 @@ def _normalize_layers(layers, ws: str) -> tuple[list[dict] | None, str | None]:
                     (wms.group(1),),
                 ).fetchone()
                 if row is None:
-                    return None, f"{ref!r} does not match a catalog raster_ref dataset"
+                    return None, f"{ref!r} does not match a catalog raster_ref dataset", warnings
             else:
                 m = sqlguard.LAYER_REF_RE.match(ref)
                 if not m:
                     return None, (f"invalid layer ref {ref!r} — use 'ref.<table>', "
-                                  f"'<your ws schema>.<table>' or 'wms:<dataset uuid>'")
+                                  f"'<your ws schema>.<table>' or 'wms:<dataset uuid>'"), warnings
                 schema = m.group(1)
                 if schema.startswith("ws_") and schema != ws:
-                    return None, f"{ref!r} is another session's workspace — only {ws}.* is yours"
+                    return None, f"{ref!r} is another session's workspace — only {ws}.* is yours", warnings
                 exists = conn.execute("SELECT to_regclass(%s)", (ref,)).fetchone()
                 if exists is None or exists[0] is None:
-                    return None, f"table {ref!r} does not exist — check layer(op='list')"
+                    return None, f"table {ref!r} does not exist — check layer(op='list')", warnings
             clean = {"ref": ref}
             if isinstance(entry.get("style"), dict):
-                clean["style"] = {k: entry["style"][k] for k in STYLE_KEYS if k in entry["style"]}
+                style = dict(entry["style"])
+                for alias, canonical in STYLE_ALIASES.items():
+                    if alias in style and canonical not in style:
+                        style[canonical] = style.pop(alias)
+                clean["style"] = {k: style[k] for k in STYLE_KEYS if k in style}
+                dropped = sorted(set(style) - set(STYLE_KEYS))
+                if dropped:
+                    warnings.append(f"{ref}: ignored unsupported style keys {dropped} "
+                                    f"(supported: {', '.join(STYLE_KEYS)})")
             if isinstance(entry.get("popup"), list):
                 clean["popup"] = [str(p) for p in entry["popup"]]
             if entry.get("label") is not None:
                 clean["label"] = str(entry["label"])
             clean["visible"] = bool(entry.get("visible", True))
             out.append(clean)
-    return out, None
+    return out, None, warnings
 
 
 def _auto_extent(layer_refs: list[str]) -> list[float] | None:
@@ -102,7 +116,7 @@ def upsert(session_id: str, view_id: str | None, title: str | None, layers,
         return {"error": f"basemap must be one of {BASEMAPS} or 'wms:<dataset uuid>'"}
     ws = sessions.ws_schema_for(session_id)
     sessions.touch_session(session_id)
-    clean_layers, err = _normalize_layers(layers, ws)
+    clean_layers, err, warnings = _normalize_layers(layers, ws)
     if err:
         return {"error": err}
 
@@ -148,8 +162,11 @@ def upsert(session_id: str, view_id: str | None, title: str | None, layers,
             return {"error": f"map view {vid!r} belongs to another session — "
                              "omit view_id to create your own view"}
         version = int(row[0])
-    return {"view_id": vid, "url": f"{config.PUBLIC_BASE_URL}/v/{vid}", "version": version,
-            "extent_3014": extent}
+    out = {"view_id": vid, "url": f"{config.PUBLIC_BASE_URL}/v/{vid}", "version": version,
+           "extent_3014": extent}
+    if warnings:
+        out["warnings"] = warnings
+    return out
 
 
 def get(view_id: str) -> dict:

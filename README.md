@@ -23,6 +23,7 @@ uv venv && uv pip install "mcp>=1.9" httpx
 .venv/bin/python scripts/bootstrap_sundsvall.py   # register + harvest + ingest + embed (~10 min)
 .venv/bin/python scripts/e2e_test.py              # full agent flow; prints a map URL
 .venv/bin/python scripts/security_test.py         # attack regressions (see Security boundaries)
+.venv/bin/python scripts/validate_data.py         # ingested rows vs each source's own count
 ```
 
 - MCP endpoint (streamable HTTP): `http://localhost:8080/mcp` — add to Claude with
@@ -84,6 +85,34 @@ Enforced today, with regression tests in `scripts/security_test.py`:
 Session identity comes from the MCP `mcp-session-id` header, which the transport rejects if
 unknown; workspaces are created lazily and survive reconnects.
 
+## Data scope — read this before trusting a count
+
+The municipal GeoServer publishes **county-wide** (Västernorrland) data, not Sundsvall-only,
+and the scope differs per layer depending on who owns it. Measured against the real municipal
+boundary (`ref.kommungrans`):
+
+| layer | in Sundsvall | total | owner |
+|-------|-------------|-------|-------|
+| `byggnader`, `adressplats`, `fastighetsgrans` | all | all | Sundsvalls kommun |
+| `detaljplan_gallande` | 1 117 | 3 228 | RIGES (multi-municipality) |
+| `byggnadsminnen` | ~100 | 219 | Länsstyrelsen |
+| `naturreservat` | 43 | 249 | Naturvårdsverket (national) |
+
+So "how many detaljplaner finns det?" answers 3 228 unless the query clips to the municipality:
+
+```sql
+SELECT count(*) FROM ref.detaljplan_gallande d
+ WHERE ST_Intersects(d.geom, (SELECT ST_Union(geom) FROM ref.kommungrans));
+```
+
+Every affected layer carries this caveat in `app.layer_meta.notes`, so `layer(op='list')`
+surfaces it to the agent. Two more source quirks worth knowing: `strandskydd` arrives as a
+single dissolved multipolygon covering all shoreline protection (not one row per zone), and
+`ovriga_byggnader` is genuinely empty at source (`numberMatched=0`), not a failed ingest.
+
+`scripts/validate_data.py` re-checks all of this: row counts against each WFS's own
+`numberMatched`, SRID, geometry validity, and extents.
+
 ## Data loaded (Sundsvall pilot)
 
 Sources: `karta.sundsvall.se/geoserver` (WFS: 885 feature types harvested; WMS: 1 203 raster
@@ -108,6 +137,46 @@ zero chunks and a warning, because OCR is deferred by decision (§ model stack).
   `embedding_model` is stored on every embedded row so model swaps are detectable.
 - Deferred by decision: SAM 3 change detection (§7 of the architecture), LightOnOCR for
   scanned plans, rerankers. The job queue, STAC slot, and doc pipeline are in place for them.
+
+## What's left
+
+Verified against the architecture doc by an audit of all 60 requirements (32 done, 19 partial,
+4 missing, 5 deferred by decision). The gaps that matter, roughly in priority order:
+
+**Blocks multi-user use**
+- *Workspaces are not durable across reconnects.* The architecture claims they are (§3.1, and
+  it is the whole justification for retiring `checkpoint`). In practice the workspace key is
+  derived from the MCP session id, which clients mint fresh on every connect — so a
+  reconnecting agent gets an empty workspace and can no longer mutate its earlier layers.
+  Fixing this needs a stable client identity or an explicit "adopt this workspace" op; it is a
+  design decision, not a patch.
+- *The MCP server is the one stateful service.* FastMCP's stateful streamable-HTTP mode keeps
+  transports in process memory, so a session pinned to replica A is unknown to replica B.
+  Everything else is genuinely stateless. Horizontal scaling needs sticky sessions or the
+  SDK's stateless mode (which would collapse workspaces without the identity fix above).
+- *Worker crash recovery is single-worker-only.* The startup sweep requeues every job in
+  `running` with no lease or worker id, so a second replica would steal its peers' work.
+
+**Correctness / completeness**
+- `query` extracts referenced tables from the EXPLAIN *plan*, so tables read inside a function
+  body (e.g. `app.geocode`) are invisible to `app.query_log`. Provenance for reads is therefore
+  slightly under-reported.
+- pgAudit covers the agent roles only; statements run by `geodata_app` (every worker ingest,
+  catalog write and viewer read) are not in the audit log.
+- `load(op='register')` accepts `ogcapi`, `wmts`, `stac` and `text` kinds but no connector
+  harvests them — the agent gets a source row it can never ingest. Either build them or
+  narrow the accepted kinds.
+- CSV/XLSX import lands as attribute-only, all-text tables: no geometry from lon/lat or WKT
+  columns and no type inference.
+- No successor to v1's `edit_field` add/drop/classify: adding a computed column means
+  recreating the layer through `layer(op='create')`.
+- The Origo config has never been loaded by a real Origo build, so its conformance is untested.
+- The document half of search has no corpus: both pilot PDFs are scans, so `doc.chunks` is
+  empty and the chunk arms are unexercised. Needs a text-layer PDF (or the deferred OCR model).
+
+**Housekeeping**
+- Exports accumulate in MinIO forever — the presigned URL expires at 24 h, the object doesn't.
+  Needs a lifecycle rule.
 
 ## Deferred by decision (documented upgrade paths)
 

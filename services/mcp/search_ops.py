@@ -90,6 +90,18 @@ def _merge_ranked(arms: list[list[dict]], key: str) -> dict:
     return best
 
 
+def _set_trgm_threshold(cur) -> None:
+    """Align the `%` operator with TRGM_THRESHOLD.
+
+    The queries filter with `text % query` so the GIN trigram indexes are actually used
+    (`similarity(...) > x` is not an indexable predicate and forces a seq scan). But `%`
+    tests against pg_trgm.similarity_threshold, which defaults to 0.3 — far stricter than
+    our 0.05 — so it must be set or the index would silently change what search returns.
+    """
+    # SET takes no bind parameters; the value is our own float constant, not user input.
+    cur.execute(f"SET pg_trgm.similarity_threshold = {float(TRGM_THRESHOLD)}")
+
+
 def _dataset_arms(query: str, kind: str | None, limit: int, vec: list[float] | None):
     fetch = max(limit * 2, 20)
     kind_sql = " AND d.kind = %(kind)s" if kind else ""
@@ -98,13 +110,15 @@ def _dataset_arms(query: str, kind: str | None, limit: int, vec: list[float] | N
         """SELECT d.id::text AS id, d.title, d.kind, d.external_id, d.description, d.ref_table,
                   s.slug AS source_slug
              FROM catalog.datasets d JOIN catalog.sources s ON s.id = d.source_id
-            WHERE similarity(d.title || ' ' || d.description, %(q)s) > %(thr)s"""
+            WHERE (d.title || ' ' || d.description) %% %(q)s
+               AND similarity(d.title || ' ' || d.description, %(q)s) > %(thr)s"""
         + kind_sql
         + " ORDER BY similarity(d.title || ' ' || d.description, %(q)s) DESC LIMIT %(n)s"
     )
     arms = []
     with db.app_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
+            _set_trgm_threshold(cur)
             cur.execute(trgm_sql, params)
             arms.append(cur.fetchall())
             if vec is not None:
@@ -126,11 +140,13 @@ def _chunk_arms(query: str, vec: list[float] | None):
     arms = []
     with db.app_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
+            _set_trgm_threshold(cur)
             cur.execute(
                 """SELECT c.id, c.page, c.chunk_index, c.text,
                           d.title AS document_title, d.source_url, d.id::text AS document_id
                      FROM doc.chunks c JOIN doc.documents d ON d.id = c.document_id
-                    WHERE similarity(c.text, %(q)s) > %(thr)s
+                    WHERE c.text %% %(q)s
+                      AND similarity(c.text, %(q)s) > %(thr)s
                     ORDER BY similarity(c.text, %(q)s) DESC LIMIT %(n)s""",
                 params,
             )

@@ -3,6 +3,7 @@
 All identifiers interpolated into SQL are validated against strict regexes and
 quoted with psycopg.sql.Identifier; every value goes through bind parameters.
 """
+import hashlib
 import os
 import re
 import threading
@@ -98,6 +99,30 @@ def layer_meta(conn, schema, table):
             "popup": list(row[1] or []),
             "label": row[2] or "",
             "visible": bool(row[3])}
+
+
+def layer_meta_fingerprint(conn, spec):
+    """Short digest of the app.layer_meta rows this view's style depends on.
+
+    Part of the ETag so that styling changes made through `layer(op='style')` invalidate
+    an open page's cached style, not just changes to the view spec itself.
+    """
+    refs = []
+    for entry in (spec or {}).get("layers") or []:
+        if isinstance(entry, dict) and isinstance(entry.get("ref"), str):
+            parsed = split_layer_ref(entry["ref"])
+            if parsed:
+                refs.append(parsed)
+    if not refs:
+        return "0"
+    rows = conn.execute(
+        "SELECT schema_name, table_name, style::text, popup::text, label, visible "
+        "  FROM app.layer_meta "
+        " WHERE (schema_name, table_name) IN (SELECT unnest(%s::text[]), unnest(%s::text[])) "
+        " ORDER BY schema_name, table_name",
+        ([s for s, _ in refs], [t for _, t in refs]),
+    ).fetchall()
+    return hashlib.md5(repr(rows).encode("utf-8")).hexdigest()[:8]
 
 
 def geometry_class(conn, schema, table):

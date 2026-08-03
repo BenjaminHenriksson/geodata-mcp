@@ -4,8 +4,11 @@ and failed → back to queued). One bad job never kills the loop."""
 
 import json
 import logging
+import os
+import re
 import time
 
+from psycopg import sql
 from psycopg.types.json import Json
 
 import dbutil
@@ -16,6 +19,10 @@ from connectors import files, pdf, wfs
 log = logging.getLogger("worker.jobs")
 
 POLL_INTERVAL_S = 2.0
+# Idle time after which a session's workspace schema is dropped, and how often to look.
+WORKSPACE_TTL_HOURS = float(os.environ.get("WORKSPACE_TTL_HOURS", "72"))
+SWEEP_INTERVAL_S = 3600.0
+WS_SCHEMA_RE = re.compile(r"^ws_[a-f0-9]{8}$")
 MAX_ATTEMPTS = 2
 
 HANDLERS = {
@@ -141,6 +148,9 @@ def _requeue_orphans() -> None:
     The status update commits before the handler runs (the row lock cannot be held for a
     15-minute ogr2ogr), so a crash or restart would otherwise strand the job forever.
     Safe because compose runs a single worker: nothing else can be legitimately running.
+    Before scaling to multiple worker replicas this must become lease-based (a worker id
+    plus heartbeat on app.jobs), or a restarting replica will requeue its peers' in-flight
+    jobs — see README "What's left".
     """
     try:
         with dbutil.connect() as conn:
@@ -164,12 +174,55 @@ def _requeue_orphans() -> None:
         log.exception("orphan-job sweep failed (continuing)")
 
 
+def sweep_workspaces() -> None:
+    """Drop workspace schemas whose session has been idle past the TTL.
+
+    The schema-per-session tenancy model assumes this reaper exists: without it schema
+    count grows monotonically, which is the one cost the architecture calls out for
+    choosing schemas over row-level security. A workspace is only dropped once its
+    session row is older than WORKSPACE_TTL_HOURS with no activity; the drop is
+    witnessed by the sql_drop event trigger, so it lands in app.provenance.
+    """
+    try:
+        with dbutil.connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT session_id, ws_schema FROM app.sessions
+                     WHERE last_seen < now() - make_interval(hours => %s)
+                    """,
+                    (WORKSPACE_TTL_HOURS,),
+                )
+                stale = cur.fetchall()
+                for row in stale:
+                    ws = row["ws_schema"]
+                    if not WS_SCHEMA_RE.match(ws):
+                        log.error("refusing to drop suspicious schema name %r", ws)
+                        continue
+                    cur.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+                        sql.Identifier(ws)))
+                    cur.execute("DELETE FROM app.sessions WHERE session_id = %s",
+                                (row["session_id"],))
+            conn.commit()
+        if stale:
+            log.info("workspace TTL sweep dropped %d idle workspace(s): %s",
+                     len(stale), ", ".join(r["ws_schema"] for r in stale))
+    except Exception:
+        log.exception("workspace TTL sweep failed (continuing)")
+
+
 def run_forever() -> None:
     """Entry point for the background thread started from main.py."""
     exporter.startup_ensure_bucket()
     _requeue_orphans()
-    log.info("job loop started (poll every %.0f s)", POLL_INTERVAL_S)
+    log.info("job loop started (poll every %.0f s, workspace TTL %s h)",
+             POLL_INTERVAL_S, WORKSPACE_TTL_HOURS)
+    next_sweep = 0.0
     while True:
+        now = time.monotonic()
+        if now >= next_sweep:
+            sweep_workspaces()
+            next_sweep = now + SWEEP_INTERVAL_S
         try:
             worked = _poll_once()
         except Exception:
