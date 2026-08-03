@@ -4,9 +4,13 @@ services:
   postgres:
     build: ./db
     environment:
-      POSTGRES_DB: geodata
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: geodata_dev
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env — copy .env.example}
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      # Consumed by db/init/02_roles.sh on first start only.
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set in .env}
+      AGENT_RO_PASSWORD: ${AGENT_RO_PASSWORD:?set in .env}
+      AGENT_WS_PASSWORD: ${AGENT_WS_PASSWORD:?set in .env}
     command: >
       postgres -c shared_preload_libraries=pgaudit
                -c max_connections=120
@@ -17,7 +21,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d geodata"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 3s
       timeout: 3s
       retries: 30
@@ -26,8 +30,8 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: geodata
-      MINIO_ROOT_PASSWORD: geodata_dev_minio
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in .env}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -42,18 +46,18 @@ services:
   mcp:
     build: ./services/mcp
     environment: &appenv
-      DATABASE_URL_APP: postgresql://geodata_app:geodata_app@postgres:5432/geodata
-      DATABASE_URL_RO: postgresql://agent_ro:agent_ro@postgres:5432/geodata
-      DATABASE_URL_WS: postgresql://agent_ws:agent_ws@postgres:5432/geodata
-      PUBLIC_BASE_URL: http://localhost:8080
+      DATABASE_URL_APP: postgresql://geodata_app:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_RO: postgresql://agent_ro:${AGENT_RO_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL_WS: postgresql://agent_ws:${AGENT_WS_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       S3_ENDPOINT: http://minio:9000
-      S3_PUBLIC_ENDPOINT: http://localhost:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
       S3_BUCKET: exports
-      MINIO_ROOT_USER: geodata
-      MINIO_ROOT_PASSWORD: geodata_dev_minio
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       EMBED_URL: http://worker:8100/embed
-      EMBED_MODEL: unsloth/embeddinggemma-300m
-      EMBED_DIM: "256"
+      EMBED_MODEL: ${EMBED_MODEL:-unsloth/embeddinggemma-300m}
+      EMBED_DIM: "${EMBED_DIM:-256}"
     depends_on:
       postgres:
         condition: service_healthy

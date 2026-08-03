@@ -26,26 +26,32 @@ Caddy routes (host `http://localhost:8080`):
 MinIO presigned URLs are generated against `S3_PUBLIC_ENDPOINT=http://localhost:9000`
 (direct host port; signature-safe, not proxied through Caddy).
 
-## Environment variables (set in docker-compose; defaults in `.env`)
+## Environment variables
+
+Credentials live in `.env` (gitignored; `.env.example` is the committed template) and are
+interpolated into `docker-compose.yml` — no password is committed. Compose refuses to start
+if a required variable is missing. `db/init/02_roles.sh` reads the role passwords from the
+environment on first initialization. Effective values:
 
 ```
-POSTGRES_DB=geodata            POSTGRES_USER=postgres        POSTGRES_PASSWORD=geodata_dev
-DATABASE_URL_APP=postgresql://geodata_app:geodata_app@postgres:5432/geodata
-DATABASE_URL_RO=postgresql://agent_ro:agent_ro@postgres:5432/geodata
-DATABASE_URL_WS=postgresql://agent_ws:agent_ws@postgres:5432/geodata
+DATABASE_URL_APP=postgresql://geodata_app:$APP_DB_PASSWORD@postgres:5432/$POSTGRES_DB
+DATABASE_URL_RO=postgresql://agent_ro:$AGENT_RO_PASSWORD@postgres:5432/$POSTGRES_DB
+DATABASE_URL_WS=postgresql://agent_ws:$AGENT_WS_PASSWORD@postgres:5432/$POSTGRES_DB
 PUBLIC_BASE_URL=http://localhost:8080
-S3_ENDPOINT=http://minio:9000
-S3_PUBLIC_ENDPOINT=http://localhost:9000
+S3_ENDPOINT=http://minio:9000          # in-cluster
+S3_PUBLIC_ENDPOINT=http://localhost:9000  # signed into presigned URLs
 S3_BUCKET=exports
-MINIO_ROOT_USER=geodata        MINIO_ROOT_PASSWORD=geodata_dev_minio
 EMBED_URL=http://worker:8100/embed
 EMBED_MODEL=unsloth/embeddinggemma-300m
 EMBED_DIM=256
 ```
 
+Passwords are interpolated into connection URLs verbatim, so they must be URL-safe
+(alphanumeric) unless pre-encoded.
+
 Roles: `geodata_app` (services; owns all app-managed schemas), `agent_ro` (agent SQL through
 `query`; SELECT-only + 15 s statement timeout), `agent_ws` (the `layer` tool's write path;
-may CREATE in `ws_*` schemas only, SELECT elsewhere). Passwords equal role names (dev).
+may CREATE in `ws_*` schemas only, SELECT elsewhere).
 
 ## Database schema (created by `db/init/*.sql`, owner `geodata_app`)
 

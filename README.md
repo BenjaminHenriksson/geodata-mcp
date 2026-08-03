@@ -17,6 +17,7 @@ loaders ──▶ PostGIS ──▶ /data /tiles endpoints ──▶ MapLibre pa
 ## Quickstart
 
 ```sh
+cp .env.example .env                # then edit: every password there is a placeholder
 docker compose up -d --build        # 6 containers: postgres, minio, mcp, worker, viewer, caddy
 uv venv && uv pip install "mcp>=1.9" httpx
 .venv/bin/python scripts/bootstrap_sundsvall.py   # register + harvest + ingest + embed (~10 min)
@@ -74,8 +75,11 @@ Enforced today, with regression tests in `scripts/security_test.py`:
   role per user (§11 of the architecture keeps RLS as the documented fallback).
 - **Map views are capability URLs.** Knowing the link is the permission (§5.2). Real
   authentication is a later addition at the Caddy chokepoint.
-- The stack ships dev credentials in `docker-compose.yml` and MinIO is exposed directly on
-  `:9000` so presigned URLs verify — both must change before anything but local use.
+- All credentials come from `.env` (gitignored; `.env.example` is the committed template with
+  placeholders). Nothing starts without it. Database role passwords are only applied on first
+  start — changing them later needs `ALTER ROLE` or a `docker compose down -v`.
+- MinIO is exposed directly on `:9000` rather than through Caddy, because the public endpoint
+  is part of the presigned-URL signature. Put it behind TLS before any non-local use.
 
 Session identity comes from the MCP `mcp-session-id` header, which the transport rejects if
 unknown; workspaces are created lazily and survive reconnects.
