@@ -89,11 +89,11 @@ def geometry_oid() -> int:
 
 # ── jobs ─────────────────────────────────────────────────────────────────────
 
-def enqueue_job(kind: str, payload: dict, session_id: str) -> int:
+def enqueue_job(kind: str, payload: dict, workspace_id: str) -> int:
     with app_pool().connection() as conn:
         row = conn.execute(
-            "INSERT INTO app.jobs (kind, payload, session_id) VALUES (%s, %s, %s) RETURNING id",
-            (kind, Jsonb(payload), session_id),
+            "INSERT INTO app.jobs (kind, payload, workspace_id) VALUES (%s, %s, %s) RETURNING id",
+            (kind, Jsonb(payload), workspace_id),
         ).fetchone()
         return int(row[0])
 
@@ -102,7 +102,7 @@ def get_job(job_id: int) -> dict | None:
     with app_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """SELECT id, kind, payload, status, result, error, session_id, attempts,
+                """SELECT id, kind, payload, status, result, error, workspace_id, attempts,
                           created_at, started_at, finished_at
                      FROM app.jobs WHERE id = %s""",
                 (job_id,),
@@ -126,7 +126,7 @@ def recent_jobs(limit: int = 20) -> list[dict]:
     with app_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """SELECT id, kind, status, error, session_id, attempts,
+                """SELECT id, kind, status, error, workspace_id, attempts,
                           created_at, started_at, finished_at
                      FROM app.jobs ORDER BY id DESC LIMIT %s""",
                 (limit,),

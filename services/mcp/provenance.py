@@ -7,7 +7,7 @@ import db
 
 def add(
     kind: str,
-    session_id: str,
+    workspace_id: str,
     object_ref: str | None = None,
     sql_text: str | None = None,
     input_tables: list[str] | None = None,
@@ -17,11 +17,11 @@ def add(
     with db.app_pool().connection() as conn:
         row = conn.execute(
             """INSERT INTO app.provenance
-                   (session_id, kind, object_ref, sql_text, input_tables, job_id, details)
+                   (workspace_id, kind, object_ref, sql_text, input_tables, job_id, details)
                VALUES (%s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
             (
-                session_id,
+                workspace_id,
                 kind,
                 object_ref,
                 sql_text,
@@ -39,7 +39,7 @@ def for_object(object_ref: str, limit: int = 50) -> list[dict]:
     with db.app_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                """SELECT id, ts, session_id, kind, object_ref, sql_text, input_tables,
+                """SELECT id, ts, workspace_id, kind, object_ref, sql_text, input_tables,
                           job_id, details
                      FROM app.provenance
                     WHERE object_ref = %s

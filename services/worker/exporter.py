@@ -191,13 +191,13 @@ def _unique_name(table: str, schema: str, used: set) -> str:
 
 
 def export(conn, job) -> dict:
-    """Job handler: {layers, format, cite, session_id} → MinIO artifact
+    """Job handler: {layers, format, cite, workspace_id} → MinIO artifact
     (+ optional citation sidecar) under exports/<exp_id>/."""
     payload = job["payload"]
     layers = payload.get("layers") or []
     fmt = (payload.get("format") or "gpkg").lower()
     cite = bool(payload.get("cite", True))
-    session_id = job.get("session_id") or payload.get("session_id")
+    workspace_id = job.get("workspace_id") or payload.get("workspace_id")
 
     if fmt not in FORMATS:
         raise ValueError(f"unsupported format: {fmt} (use gpkg|geojson|csv|parquet)")
@@ -283,7 +283,7 @@ def export(conn, job) -> dict:
                 cur,
                 kind="export",
                 object_ref=object_key,
-                session_id=session_id,
+                workspace_id=workspace_id,
                 input_tables=layers,
                 job_id=job["id"],
                 details={"layers": layers, "format": fmt},

@@ -19,8 +19,7 @@ from connectors import files, pdf, wfs
 log = logging.getLogger("worker.jobs")
 
 POLL_INTERVAL_S = 2.0
-# Idle time after which a session's workspace schema is dropped, and how often to look.
-WORKSPACE_TTL_HOURS = float(os.environ.get("WORKSPACE_TTL_HOURS", "72"))
+# How often to look for orphaned workspace schemas (see sweep_workspaces).
 SWEEP_INTERVAL_S = 3600.0
 WS_SCHEMA_RE = re.compile(r"^ws_[a-f0-9]{8}$")
 MAX_ATTEMPTS = 2
@@ -175,23 +174,25 @@ def _requeue_orphans() -> None:
 
 
 def sweep_workspaces() -> None:
-    """Drop workspace schemas whose session has been idle past the TTL.
+    """Drop ws_* schemas that no app.workspaces row owns.
 
-    The schema-per-session tenancy model assumes this reaper exists: without it schema
-    count grows monotonically, which is the one cost the architecture calls out for
-    choosing schemas over row-level security. A workspace is only dropped once its
-    session row is older than WORKSPACE_TTL_HOURS with no activity; the drop is
-    witnessed by the sql_drop event trigger, so it lands in app.provenance.
+    Durable workspaces are deleted explicitly (workspace tool / manager UI), never by
+    idle time — so the only schemas to reap are orphans: leftovers of the pre-auth
+    per-session model, or schemas whose owning row was removed without the drop
+    completing. Safe against races because the workspace row is always committed
+    before its schema is created (sessions.ensure_ws_schema), and row + schema are
+    deleted in one transaction. Drops are witnessed by the sql_drop event trigger.
     """
     try:
         with dbutil.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT session_id, ws_schema FROM app.sessions
-                     WHERE last_seen < now() - make_interval(hours => %s)
-                    """,
-                    (WORKSPACE_TTL_HOURS,),
+                    SELECT n.nspname AS ws_schema FROM pg_namespace n
+                     WHERE n.nspname ~ '^ws_[a-f0-9]{8}$'
+                       AND NOT EXISTS (SELECT 1 FROM app.workspaces w
+                                        WHERE w.ws_schema = n.nspname)
+                    """
                 )
                 stale = cur.fetchall()
                 for row in stale:
@@ -201,22 +202,21 @@ def sweep_workspaces() -> None:
                         continue
                     cur.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
                         sql.Identifier(ws)))
-                    cur.execute("DELETE FROM app.sessions WHERE session_id = %s",
-                                (row["session_id"],))
+                    cur.execute("DELETE FROM app.layer_meta WHERE schema_name = %s", (ws,))
             conn.commit()
         if stale:
-            log.info("workspace TTL sweep dropped %d idle workspace(s): %s",
+            log.info("workspace sweep dropped %d orphaned schema(s): %s",
                      len(stale), ", ".join(r["ws_schema"] for r in stale))
     except Exception:
-        log.exception("workspace TTL sweep failed (continuing)")
+        log.exception("workspace sweep failed (continuing)")
 
 
 def run_forever() -> None:
     """Entry point for the background thread started from main.py."""
     exporter.startup_ensure_bucket()
     _requeue_orphans()
-    log.info("job loop started (poll every %.0f s, workspace TTL %s h)",
-             POLL_INTERVAL_S, WORKSPACE_TTL_HOURS)
+    log.info("job loop started (poll every %.0f s, orphan sweep every %.0f s)",
+             POLL_INTERVAL_S, SWEEP_INTERVAL_S)
     next_sweep = 0.0
     while True:
         now = time.monotonic()

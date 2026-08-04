@@ -11,22 +11,22 @@ import sqlguard
 MAX_ROWS = 1000
 
 
-def _log(session_id: str, sql_text: str, refs: list[str] | None, row_count: int | None,
+def _log(workspace_id: str, sql_text: str, refs: list[str] | None, row_count: int | None,
          duration_ms: int | None, error: str | None) -> str:
     with db.app_pool().connection() as conn:
         row = conn.execute(
-            """INSERT INTO app.query_log (session_id, sql_text, referenced_tables,
+            """INSERT INTO app.query_log (workspace_id, sql_text, referenced_tables,
                                           row_count, duration_ms, error)
                VALUES (%s, %s, %s, %s, %s, %s) RETURNING query_id""",
-            (session_id, sql_text, refs, row_count, duration_ms, error),
+            (workspace_id, sql_text, refs, row_count, duration_ms, error),
         ).fetchone()
         return str(row[0])
 
 
-def run_query(session_id: str, sql_text: str, limit: int = 500) -> dict:
+def run_query(workspace_id: str, sql_text: str, limit: int = 500) -> dict:
     cleaned, err = sqlguard.validate_readonly(sql_text)
     if err:
-        qid = _log(session_id, str(sql_text or ""), None, None, None, err)
+        qid = _log(workspace_id, str(sql_text or ""), None, None, None, err)
         return {"error": err, "query_id": qid}
 
     try:
@@ -48,7 +48,7 @@ def run_query(session_id: str, sql_text: str, limit: int = 500) -> dict:
         except Exception as e:
             msg = str(e).strip()
             duration = int((time.monotonic() - started) * 1000)
-            qid = _log(session_id, cleaned, None, None, duration, msg)
+            qid = _log(workspace_id, cleaned, None, None, duration, msg)
             return {
                 "error": f"SQL error: {msg}",
                 "hint": (
@@ -78,7 +78,7 @@ def run_query(session_id: str, sql_text: str, limit: int = 500) -> dict:
     except Exception as e:
         msg = str(e).strip()
         duration = int((time.monotonic() - started) * 1000)
-        qid = _log(session_id, cleaned, refs or None, None, duration, msg)
+        qid = _log(workspace_id, cleaned, refs or None, None, duration, msg)
         return {
             "error": f"SQL error: {msg}",
             "hint": (
@@ -95,7 +95,7 @@ def run_query(session_id: str, sql_text: str, limit: int = 500) -> dict:
         for r in raw_rows
     ]
     duration = int((time.monotonic() - started) * 1000)
-    qid = _log(session_id, cleaned, refs or None, len(rows), duration, None)
+    qid = _log(workspace_id, cleaned, refs or None, len(rows), duration, None)
     return {
         "query_id": qid,
         "columns": columns,

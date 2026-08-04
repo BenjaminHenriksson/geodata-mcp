@@ -6,7 +6,7 @@ for the v1 build. When architecture doc and this file disagree, this file wins.
 Scope notes for this build:
 - Target municipality: **Sundsvall** (GovTech Pilot 3, `data_sources.xlsx`). CRS **EPSG:3014** (SWEREF 99 17 15).
 - Only local model: **EmbeddingGemma-300M** via ungated mirror `unsloth/embeddinggemma-300m`, truncated to **256 dims**, run inside the worker container (CPU). SAM 3 change detection, LightOnOCR, pgSTAC/TiTiler: **deferred** (documented, not built).
-- Map snapshot PNG: deferred. Origo support = config compiler endpoint (see §Viewer); interactive page uses MapLibre.
+- Map snapshot PNG: deferred. **Both renderers are interactive**: MapLibre GL JS at `/v/<id>`, Origo 2.10 (OpenLayers) at `/v/<id>?renderer=origo`, compiled from the same map spec and vendored into the viewer image.
 
 ## Topology (docker compose, one origin via Caddy)
 
@@ -14,8 +14,8 @@ Scope notes for this build:
 |----------|---------------|-----------------|-----------|------|
 | caddy    | caddy         | 80              | **8080**  | reverse proxy, one origin |
 | postgres | postgres      | 5432            | 5433      | PostGIS 17 + pgvector + pg_trgm |
-| mcp      | mcp           | 8000            | —         | FastMCP streamable HTTP at `/mcp` |
-| viewer   | viewer        | 8001            | —         | map pages + data endpoint |
+| mcp      | mcp           | 8000            | —         | FastMCP streamable HTTP at `/mcp`, bearer auth |
+| viewer   | viewer        | 8001            | —         | map pages + data endpoint + workspace manager UI |
 | worker   | worker        | 8100            | —         | job runner + `/embed` HTTP |
 | minio    | minio         | 9000 (api)      | 9000      | exports bucket; presigned URLs use host port |
 
@@ -44,6 +44,8 @@ S3_BUCKET=exports
 EMBED_URL=http://worker:8100/embed
 EMBED_MODEL=unsloth/embeddinggemma-300m
 EMBED_DIM=256
+GEODATA_API_KEYS=<comma-separated raw keys>   # mcp: bearer auth; refuses to start if empty
+VIEWER_SECRET=<random string>                 # viewer: signs the manager-UI login cookie
 ```
 
 Passwords are interpolated into connection URLs verbatim, so they must be URL-safe
@@ -71,7 +73,7 @@ catalog.sources (
   attribution   text DEFAULT '',
   trust         text NOT NULL DEFAULT 'official' CHECK (trust IN ('official','community','agent')),
   auth_note     text DEFAULT '',                 -- e.g. 'requires Lantmäteriet account' (no secrets)
-  added_by      text DEFAULT 'admin',            -- 'admin' | session_id
+  added_by      text DEFAULT 'admin',            -- 'admin' | workspace_id
   created_at    timestamptz DEFAULT now()
 )
 
@@ -101,19 +103,22 @@ catalog.datasets (
 
 - `ref.*` — shared ingested tables, geometry column **`geom`**, SRID 3014, gist-indexed. Table
   names: `[a-z0-9_]{1,60}`.
-- `ws_<8 hex>` — one schema per MCP session, created lazily by the MCP server (as
-  `geodata_app`), `GRANT USAGE, CREATE` to `agent_ws`, `GRANT USAGE` + default SELECT to `agent_ro`.
+- `ws_<8 hex>` — one schema per **durable workspace** (random suffix, not derived), created
+  lazily by the MCP server (as `geodata_app`) on first write, `GRANT USAGE, CREATE` to
+  `agent_ws`, `GRANT USAGE` + default SELECT to `agent_ro`.
   Workspaces are **namespacing and lifecycle, not tenancy**: because all agent SQL shares one
-  `agent_ro` role, every session can read every workspace. Writes are session-scoped (the
-  `layer` tool resolves the schema from the caller's session); reads are not. Per-user
-  isolation requires auth + RLS or per-user roles, which §11 of the architecture defers.
+  `agent_ro` role, every authenticated principal can read every workspace. Writes are
+  workspace-scoped (the `layer` tool resolves the schema from the caller's active workspace);
+  reads are not. Per-principal read isolation requires RLS or per-user roles (§11).
 - Workspace tables ingested by the worker (`target='workspace'`) must be
   `ALTER TABLE … OWNER TO agent_ws` after load, or the `layer` tool cannot mutate them.
-- The session key stored in `app.sessions`/`provenance`/`jobs`/`map_views` is
-  **SHA-256 of the `mcp-session-id` header**, never the raw token: the raw header is a bearer
-  credential, so a leaked row must not be replayable. `ws_<hash>` = first 8 hex of that digest.
-  Grants inside `app` are per table (never schema-wide `ALTER DEFAULT PRIVILEGES`), and
-  `app.sessions` is not granted to the agent roles.
+- The attribution key stored in `provenance`/`jobs`/`map_views`/`query_log` is the
+  **workspace uuid** (`workspace_id`) — a plain identifier, not a credential. The credential
+  is the API key, stored only as a SHA-256 digest in `app.api_keys`. Grants inside `app` are
+  per table (never schema-wide `ALTER DEFAULT PRIVILEGES`); `app.api_keys` and
+  `app.workspaces` are not granted to the agent roles.
+- Workspaces are deleted explicitly (tool or manager UI), never by idle TTL. The worker sweeps
+  hourly for `ws_*` schemas that no `app.workspaces` row owns and drops those.
 
 ### doc
 
@@ -128,20 +133,32 @@ doc.chunks    (id bigserial PK, document_id uuid REFERENCES doc.documents(id) ON
 ### app
 
 ```sql
-app.sessions   (session_id text PK, ws_schema text UNIQUE NOT NULL,
-                created_at timestamptz DEFAULT now(), last_seen timestamptz DEFAULT now())
+app.api_keys   (id uuid PK default gen_random_uuid(),
+                key_hash text UNIQUE NOT NULL,     -- sha256 hex of the raw bearer key
+                name text DEFAULT '', disabled boolean NOT NULL DEFAULT false,
+                created_at timestamptz DEFAULT now(), last_used timestamptz)
+
+app.workspaces (id uuid PK default gen_random_uuid(),
+                api_key_id uuid NOT NULL REFERENCES app.api_keys(id) ON DELETE CASCADE,
+                name text NOT NULL CHECK (name ~ '^[a-z0-9][a-z0-9_-]{0,39}$'),
+                ws_schema text UNIQUE NOT NULL CHECK (ws_schema ~ '^ws_[a-f0-9]{8}$'),
+                is_active boolean NOT NULL DEFAULT false,
+                created_at timestamptz DEFAULT now(), last_used timestamptz DEFAULT now(),
+                UNIQUE (api_key_id, name))
+-- partial unique index: exactly one active workspace per key
+CREATE UNIQUE INDEX workspaces_one_active_idx ON app.workspaces (api_key_id) WHERE is_active;
 
 app.jobs       (id bigserial PK,
                 kind text NOT NULL CHECK (kind IN ('harvest_wfs','harvest_wms','ingest_wfs',
                      'ingest_file','ingest_pdf','embed_catalog','export')),
                 payload jsonb NOT NULL DEFAULT '{}',
                 status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error')),
-                result jsonb, error text, session_id text,
+                result jsonb, error text, workspace_id text,
                 attempts int DEFAULT 0, created_at timestamptz DEFAULT now(),
                 started_at timestamptz, finished_at timestamptz)
 
 app.map_views  (view_id text PK,                 -- 'v_' + 24 hex (secrets.token_hex(12))
-                session_id text, title text,
+                workspace_id text, title text,
                 spec jsonb NOT NULL, version int NOT NULL DEFAULT 1,
                 created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())
 
@@ -150,21 +167,21 @@ app.layer_meta (schema_name text, table_name text, style jsonb DEFAULT '{}', not
                 PRIMARY KEY (schema_name, table_name))
 
 app.provenance (id bigserial PK, ts timestamptz DEFAULT now(),
-                session_id text, kind text NOT NULL,   -- 'load','layer_create','layer_update',
+                workspace_id text, kind text NOT NULL,   -- 'load','layer_create','layer_update',
                                                         -- 'layer_drop','layer_rename','ddl_event','export','inline'
                 object_ref text,                        -- 'schema.table' or dataset id or export key
                 sql_text text, input_tables text[], job_id bigint, details jsonb DEFAULT '{}')
 -- append-only: REVOKE UPDATE, DELETE ON app.provenance FROM PUBLIC and all app roles.
 
 app.query_log  (query_id uuid PK DEFAULT gen_random_uuid(), ts timestamptz DEFAULT now(),
-                session_id text, sql_text text NOT NULL, referenced_tables text[],
+                workspace_id text, sql_text text NOT NULL, referenced_tables text[],
                 row_count int, duration_ms int, error text)
 ```
 
 Event triggers (backstop, §8.1): on `ddl_command_end` and `sql_drop`, if the affected object's
 schema matches `ws_%` or `ref`, insert an `app.provenance` row with kind `ddl_event`, reading
-`current_setting('app.session_id', true)` for attribution. The `layer` tool sets
-`SET LOCAL app.session_id = '<sid>'` inside its transaction.
+`current_setting('app.workspace_id', true)` for attribution. The `layer` and `workspace` tools
+set `app.workspace_id` inside their transactions.
 
 Geocoding functions (SECURITY DEFINER, owner `geodata_app`, executable by `agent_ro`):
 - `app.geocode(q text, max_results int default 5)` → rows `(address text, geom geometry, score real)` —
@@ -196,7 +213,7 @@ Single Python process, two responsibilities:
    - `embed_catalog {}` — embed all `catalog.datasets` rows where `embedding IS NULL OR
      embedding_model <> $EMBED_MODEL` (text = title + description + keywords), and any unembedded
      doc.chunks; batch 32; set `embedding_model`.
-   - `export {layers: [..], format, session_id, cite}` — `ogr2ogr -f <driver>` from PG to
+   - `export {layers: [..], format, workspace_id, cite}` — `ogr2ogr -f <driver>` from PG to
      `/tmp/exp_<id>.<ext>` (gpkg|geojson|csv|parquet), upload to MinIO `exports/` via boto3-style
      client (use `minio` py lib), plus `<name>.citation.md` sidecar built from `app.provenance` +
      `catalog.sources` for the exported layers when `cite`. Result: `{object_key, sidecar_key}`.
@@ -211,11 +228,31 @@ Single Python process, two responsibilities:
 On start, worker ensures the MinIO bucket exists. GDAL present in image (use
 `ghcr.io/osgeo/gdal:ubuntu-small-*` base or apt `gdal-bin python3-gdal`).
 
-## MCP server (FastMCP, streamable HTTP, stateless_http-compatible)
+## MCP server (FastMCP, stateful streamable HTTP, bearer auth)
 
-Mounted at `/mcp`. On each tool call, resolve the MCP session id (from FastMCP context); get or
-create `app.sessions` row (ws schema `ws_` + first 8 hex of sha256(session id); create schema
-lazily only when `layer`/`load op=inline` first writes). Six tools; all return JSON-serializable dicts.
+Mounted at `/mcp`, served by `uvicorn` over `mcp.streamable_http_app()` wrapped in a pure-ASGI
+`BearerAuthMiddleware`: requests to `/mcp*` without a known, enabled key in
+`Authorization: Bearer <key>` get **401 + `WWW-Authenticate: Bearer`**; `/healthz` stays open.
+Valid digests are cached 30 s, so disabling a key takes effect within that window.
+
+On each tool call, resolve the principal from the **per-request** Starlette request
+(`ctx.request_context.request.headers`) — not a middleware contextvar, which does not
+propagate into tool handlers in stateful mode because the MCP session task is spawned once at
+`initialize`. Hash the key, look up `app.api_keys`, then take that key's active
+`app.workspaces` row (creating and activating `default` when there is none). The `ws_*` schema
+is created lazily only when `layer`/`load op=inline` first writes. Seven tools; all return
+JSON-serializable dicts.
+
+0. `workspace(op='current', name=None, new_name=None)` — durable workspace management, scoped to
+   the calling key:
+   - `current {}` → active workspace name, schema, layer list.
+   - `list {}` → all the key's workspaces with layer/map counts and timestamps.
+   - `new {name}` → create + activate (name `^[a-z0-9][a-z0-9_-]{0,39}$`, max 20 per key).
+   - `use {name}` → make it active (single-transaction flip; the partial unique index enforces
+     one active workspace per key).
+   - `rename {name, new_name}` → relabel only; `delete {name}` → `DROP SCHEMA … CASCADE` plus
+     `app.layer_meta`/`app.map_views`/`app.workspaces` cleanup, witnessed by the `sql_drop`
+     event trigger. `new` on an existing name switches to it instead (reply carries `created`).
 Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` column, SRID 3014,
 `app.geocode`, catalog tables readable).
 
@@ -253,7 +290,7 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
    app.query_log; return `{query_id, columns, rows, row_count, truncated, referenced_tables}`.
    On SQL error: return `{error, hint}` (no exception), still logged.
 4. `layer(op, ...)` — the ONLY write path; every op appends `app.provenance` and runs with
-   `SET LOCAL app.session_id`:
+   `SET LOCAL app.workspace_id`:
    - `create {name, sql, notes='', style=None}` — validate name; EXPLAIN the SELECT (as agent_ro)
      for input tables; as agent_ws: `CREATE TABLE ws_x.<name> AS <sql>`; if a geometry column
      exists, gist index it; upsert app.layer_meta; provenance `layer_create` (sql_text, inputs).
@@ -277,9 +314,19 @@ Errors: tools return `{"error": "..."}` dicts rather than raising, with actionab
 
 ## Viewer
 
-FastAPI on :8001. DB via `DATABASE_URL_APP` (read paths only).
+FastAPI on :8001. DB via `DATABASE_URL_APP` (read paths only, plus workspace-manager writes).
 
 - `GET /healthz` → ok.
+- `GET /` → redirect to `/workspaces`.
+- **Workspace manager UI** (requires `VIEWER_SECRET`; 503 without it):
+  - `GET /login`, `POST /login {key}` — verifies the sha256 digest against `app.api_keys`;
+    on success sets a signed HttpOnly cookie carrying only the api_key **id** (7-day TTL,
+    HMAC-SHA256 over `<id>.<expiry>` with `VIEWER_SECRET`). `POST /logout` clears it.
+  - `GET /workspaces` — the key's workspaces with layer counts, map links (both renderers),
+    created/last-used times, and the active badge. Redirects to `/login` when unauthenticated.
+  - `POST /workspaces/action {action, workspace_id, new_name?, csrf}` — `activate|rename|delete`.
+    Every action re-checks that the workspace belongs to the cookie's key (otherwise "unknown
+    workspace") and requires the per-principal CSRF token; errors re-render the page with 400.
 - `GET /v/{view_id}?renderer=maplibre|origo` — HTML page. 404 for unknown view. The page:
   - loads vendored `/static/maplibre-gl.js` + `.css` (vendor at build time from npm/unpkg into the image),
   - fetches `/v/{view_id}/style.json`, applies it, fits `extent_3014` (transformed client-side
@@ -292,9 +339,12 @@ FastAPI on :8001. DB via `DATABASE_URL_APP` (read paths only).
     when `spec.legend`.
 - `GET /v/{view_id}/style.json` — MapLibre style compiled from the spec. Response header
   `ETag: W/"<version>"`; honours `If-None-Match` → 304. Style content:
-  - basemap `positron` → raster source `https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png`
-    (attribution CARTO/OSM), `osm` → tile.openstreetmap.org, `none` → background only;
-    `wms:<dataset_id>` → raster source with WMS GetMap URL template (EPSG:3857).
+  - the backdrop is **per-renderer, not per-view**: MapLibre always emits the Carto Positron
+    raster source `https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png` (attribution
+    CARTO/OSM) — fast, CDN-cached, aligned in its EPSG:3857 world. `spec.basemap` is accepted
+    by the `map` tool but not consulted by either interactive renderer (Origo always uses the
+    official municipal WMS; see origo.json below). `wms:` refs remain usable as overlay
+    *layers* (raster source with a WMS GetMap URL template, EPSG:3857).
   - each vector layer → GeoJSON source `/data/{schema}.{table}.geojson?view={view_id}&crs=4326`
     if feature_count ≤ 20 000 (or unknown), else vector-tile source
     `/tiles/{schema}.{table}/{z}/{x}/{y}.mvt?view={view_id}` (source-layer = table name).
@@ -302,9 +352,27 @@ FastAPI on :8001. DB via `DATABASE_URL_APP` (read paths only).
     lines → line layer (stroke/width); points → circle layer (circle px, fill). Defaults from
     app.layer_meta.style, overridden by the spec's per-layer style. `metadata` on the style
     carries `{view_id, version, extent_4326, legend: [...], popups: {...}}` for the page.
-- `GET /v/{view_id}/origo.json` — Origo JSON config: projection `EPSG:3014` (+proj4 def),
-  extent, WMS layers pass-through, vector layers as GeoJSON sources (`crs=3014`), styles mapped
-  to Origo style objects. (Interop contract; not served as an interactive page in v1.)
+- `GET /v/{view_id}/origo.json` — Origo 2.10 config: `projectionCode` EPSG:3014 with
+  `proj4Defs` for 3014 + 3006 (`urn:ogc:def:crs` aliases), `projectionExtent`/`extent`, metre
+  `resolutions` ladder, initial `center`/`zoom` derived from the view extent, `featureinfoOptions`,
+  `legend`/`home` controls, WMS layers via named `source` blocks (version 1.1.1), vector layers
+  as `GEOJSON` with `source: /data/<ref>.geojson?view=…&crs=3014` and `projection: EPSG:3014`,
+  named `styles` (array-of-arrays), and a `geodata` block (`view_id`, `version`, `title`,
+  optional `note`) that Origo ignores and the page reads.
+  Ordering contract: **overlays first, background layers last** — Origo draws the array
+  top-down. Background layers must carry a `style` whose rule has an `image` (the legend's
+  background switcher throws otherwise and the whole legend control disappears).
+  The backdrop is **per-renderer, not per-view**: Origo **always** uses the official municipal
+  WMS backdrop, resolved from the catalog by layer name (`ORIGO_WMS_BACKDROP`, default
+  `Lantmateriet:topowebbkartan_nedtonad`) — the GeoServer reprojects it to EPSG:3014, where
+  Web-Mercator XYZ tiles (Positron/OSM) cannot be aligned. `spec.basemap` is not consulted.
+  If the backdrop layer is missing from the catalog, the view gets a `geodata.note`
+  explaining it.
+- The Origo page (`?renderer=origo`) fetches that config and boots Origo with it as an **inline
+  object** (a full absolute URL is mangled by Origo's permalink parsing), passing
+  `svgSpritePath: /static/origo/css/svg/` — without that override every toolbar icon 404s
+  silently. It polls `geodata.version` and offers a reload button on change (OpenLayers has no
+  style-diff equivalent to MapLibre's `setStyle({diff:true})`).
 - `GET /data/{layer}.geojson?view=<view_id>&crs=4326|3014&limit=<n≤50000>` — `layer` is
   `schema.table`; **require** the `view` param and check the layer is referenced by that view
   (capability check); ST_AsGeoJSON FeatureCollection, default cap 20 000 features, geometry
@@ -326,3 +394,7 @@ Identifier safety everywhere: schema/table names validated `^[a-z0-9_]{1,63}$` a
    (provenance row) → map upsert → URL opens in Chrome and renders → export GPKG verified
    with ogrinfo; citation sidecar present.
 5. Map updates picked up by an open browser page within ~5 s via ETag polling.
+6. `/mcp` returns 401 without a valid bearer key; a reconnecting client with the same key
+   lands in the same workspace with its layers intact.
+7. Both renderers draw the same view: `/v/<id>` (MapLibre) and `/v/<id>?renderer=origo`
+   (Origo, EPSG:3014, legend + feature-info popups).

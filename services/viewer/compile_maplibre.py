@@ -5,9 +5,7 @@ from urllib.parse import quote
 import dbq
 
 POSITRON_TILES = "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png"
-OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 CARTO_ATTRIBUTION = "© OpenStreetMap contributors © CARTO"
-OSM_ATTRIBUTION = "© OpenStreetMap contributors"
 
 GEOJSON_MAX_FEATURES = 20000
 
@@ -35,27 +33,14 @@ def _num(value, default):
     return default
 
 
-def _basemap(conn, basemap, sources, layers):
-    if basemap == "none":
-        layers.append({"id": "background", "type": "background",
-                       "paint": {"background-color": "#f8f8f8"}})
-        return
-    if isinstance(basemap, str) and basemap.startswith("wms:"):
-        ds = dbq.wms_dataset(conn, basemap[4:])
-        if ds is not None and ds["url"]:
-            sources["basemap"] = {"type": "raster",
-                                  "tiles": [wms_tile_url(ds["url"], ds["external_id"])],
-                                  "tileSize": 256,
-                                  "attribution": ds["attribution"]}
-            layers.append({"id": "basemap", "type": "raster", "source": "basemap"})
-            return
-        basemap = "positron"  # fall through: unknown WMS dataset
-    if basemap == "osm":
-        tiles, attribution = [OSM_TILES], OSM_ATTRIBUTION
-    else:  # positron (default)
-        tiles, attribution = [POSITRON_TILES], CARTO_ATTRIBUTION
-    sources["basemap"] = {"type": "raster", "tiles": tiles,
-                          "tileSize": 256, "attribution": attribution}
+def _basemap(sources, layers):
+    # The MapLibre renderer always shows Carto Positron: it renders in EPSG:3857,
+    # where the CDN tiles are aligned and far faster than any municipal WMS.
+    # spec['basemap'] is not consulted — the backdrop is per-renderer, not
+    # per-view: Origo always shows the official municipal WMS instead (it renders
+    # in EPSG:3014, where XYZ tiles cannot be aligned; see compile_origo).
+    sources["basemap"] = {"type": "raster", "tiles": [POSITRON_TILES],
+                          "tileSize": 256, "attribution": CARTO_ATTRIBUTION}
     layers.append({"id": "basemap", "type": "raster", "source": "basemap"})
 
 
@@ -71,7 +56,7 @@ def compile_style(conn, view):
     legend = []
     popups = {}
 
-    _basemap(conn, spec.get("basemap") or "positron", sources, layers)
+    _basemap(sources, layers)
 
     vec_index = 0
     for i, entry in enumerate(spec.get("layers") or []):

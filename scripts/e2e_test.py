@@ -1,7 +1,8 @@
 """End-to-end agent flow over MCP streamable HTTP.
 
-search → query (query_id logged) → layer create (provenance) → layer update →
-map upsert → map update (for ETag polling check) → export GPKG.
+workspace new → search → query (query_id logged) → layer create (provenance) →
+layer update → reconnect (durability) → map upsert → map update (ETag polling
+check) → export GPKG.
 
 Run:  .venv/bin/python scripts/e2e_test.py
 Exits non-zero on first hard failure; prints the map URL for browser inspection.
@@ -27,6 +28,30 @@ def check(name, ok, detail=""):
 
 async def main():
     async with mcp_session() as s:
+        # 0. dedicated durable workspace for this test (idempotent across runs).
+        # Assert the delete op explicitly rather than discarding it: a broken delete
+        # would otherwise pass run 1 and fail run 2 with an unrelated error.
+        existing = {w["name"] for w in (await call(s, "workspace", op="list"))["workspaces"]}
+        out = await call(s, "workspace", op="delete", name="e2e")
+        if "e2e" in existing:
+            check("workspace delete removes an existing workspace",
+                  out.get("deleted") == "e2e", str(out)[:120])
+        else:
+            check("workspace delete reports a clear error for an unknown name",
+                  bool(out.get("error")) and "e2e" in str(out.get("error")), str(out)[:120])
+        out = await call(s, "workspace", op="new", name="e2e")
+        check("workspace create+activate", out.get("active") and out.get("ws_schema")
+              and out.get("created") is True, str(out)[:140])
+        # op='new' on an existing name must switch, not silently duplicate or wipe
+        again = await call(s, "workspace", op="new", name="e2e")
+        check("workspace new on existing name switches instead of duplicating",
+              again.get("created") is False and again.get("ws_schema") == out.get("ws_schema"),
+              str(again)[:140])
+        out = await call(s, "workspace", op="list")
+        names = {w.get("name"): w for w in out.get("workspaces", [])}
+        check("workspace list shows e2e active", names.get("e2e", {}).get("is_active"),
+              str(list(names))[:120])
+
         # 1. search
         out = await call(s, "search", query="strandskydd")
         ds = out.get("datasets", [])
@@ -56,7 +81,7 @@ async def main():
         out = await call(s, "query", sql="DELETE FROM ref.strandskydd")
         check("query rejects writes", bool(out.get("error")), str(out.get("error"))[:100])
 
-        # 3. layer create: buildings within 50 m of strandskydd zones (screening-style derivation)
+        # 3. layer create: buildings within 100 m of nature reserves (screening-style derivation)
         out = await call(s, "layer", op="create", name="hus_nara_naturreservat",
                         sql="""SELECT b.geom, b.fid AS bfid
                                  FROM ref.byggnader b
@@ -82,7 +107,17 @@ async def main():
                                 str(fids[1]): {"granskning": "ok"}})
         check("layer update adds attribute", "error" not in out, str(out)[:150])
 
-        # 5. map upsert
+        # 5. durability: a brand-new connection (fresh mcp-session-id) must land in the
+        # same workspace with the same tables — the point of API-key-keyed workspaces.
+        async with mcp_session() as s2:
+            out = await call(s2, "workspace", op="current")
+            check("workspace survives reconnect", out.get("workspace") == "e2e",
+                  f"current={out.get('workspace')} schema={out.get('ws_schema')}")
+            out = await call(s2, "query", sql=f"SELECT count(*) FROM {ws_table}")
+            check("layers survive reconnect", out.get("rows") and out["rows"][0][0] > 0,
+                  str(out.get("rows")))
+
+        # 6. map upsert
         out = await call(s, "map", op="upsert", title="Byggnader nära naturreservat",
                         layers=[
                             {"ref": "ref.strandskydd", "style": {"fill": "#1f78b4", "opacity": 0.3}},
@@ -91,9 +126,9 @@ async def main():
                         ], legend=True)
         check("map upsert", out.get("view_id") and out.get("url"), out.get("url"))
         view_id, url = out["view_id"], out["url"]
-        print(f"\n  MAP URL: {url}\n")
+        print(f"\n  MAP URL: {url}\n  ORIGO:   {url}?renderer=origo\n")
 
-        # 6. map update (bump version — browser should pick up via ETag polling)
+        # 7. map update (bump version — browser should pick up via ETag polling)
         out = await call(s, "map", op="upsert", view_id=view_id, title="Byggnader nära naturreservat (v2)",
                         layers=[
                             {"ref": "ref.strandskydd", "style": {"fill": "#1f78b4", "opacity": 0.3}},
@@ -103,7 +138,7 @@ async def main():
                         ], legend=True)
         check("map version bump", out.get("version", 0) >= 2, f"version={out.get('version')}")
 
-        # 7. export
+        # 8. export
         out = await call(s, "export", layers=[ws_table, "ref.strandskydd"], format="gpkg", cite=True)
         check("export returns signed url", bool(out.get("url")), str(out)[:200])
         print(json.dumps({"map_url": url, "view_id": view_id, "export": out}, indent=2))

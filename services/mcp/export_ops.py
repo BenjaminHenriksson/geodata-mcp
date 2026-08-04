@@ -37,7 +37,7 @@ def _presign(client: Minio, key: str) -> str:
     )
 
 
-def run_export(session_id: str, layers, fmt: str, cite: bool) -> dict:
+def run_export(workspace_id: str, layers, fmt: str, cite: bool) -> dict:
     if fmt not in FORMATS:
         return {"error": f"format must be one of {', '.join(FORMATS)}"}
     if isinstance(layers, str):
@@ -45,8 +45,7 @@ def run_export(session_id: str, layers, fmt: str, cite: bool) -> dict:
     if not isinstance(layers, list) or not layers:
         return {"error": "layers must be a non-empty list of 'schema.table' references"}
 
-    ws = sessions.ws_schema_for(session_id)
-    sessions.touch_session(session_id)
+    ws = sessions.ws_schema_for(workspace_id)
     clean: list[str] = []
     with db.app_pool().connection() as conn:
         for ref in layers:
@@ -54,14 +53,15 @@ def run_export(session_id: str, layers, fmt: str, cite: bool) -> dict:
             if not m:
                 return {"error": f"invalid layer ref {ref!r} — use 'ref.<table>' or '{ws}.<table>'"}
             if m.group(1).startswith("ws_") and m.group(1) != ws:
-                return {"error": f"{ref!r} is another session's workspace"}
+                return {"error": f"{ref!r} is another workspace — your active one is {ws} "
+                             "(switch with workspace(op='use'))"}
             exists = conn.execute("SELECT to_regclass(%s)", (str(ref),)).fetchone()
             if exists is None or exists[0] is None:
                 return {"error": f"table {ref!r} does not exist — check layer(op='list')"}
             clean.append(str(ref))
 
-    payload = {"layers": clean, "format": fmt, "cite": bool(cite), "session_id": session_id}
-    job_id = db.enqueue_job("export", payload, session_id)
+    payload = {"layers": clean, "format": fmt, "cite": bool(cite), "workspace_id": workspace_id}
+    job_id = db.enqueue_job("export", payload, workspace_id)
     job = db.wait_for_job(job_id, timeout_s=WAIT_S)
 
     if job is None:

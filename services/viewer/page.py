@@ -1,5 +1,7 @@
 """Inline HTML templates for the viewer pages (no template engine, no CDN)."""
 
+import html
+
 _MAPLIBRE_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -35,6 +37,13 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
     position: absolute; top: 45%; left: 0; right: 0; z-index: 20; display: none;
     text-align: center; font: 14px/1.5 system-ui, sans-serif; color: #b00020;
   }
+  #renderer-toggle {
+    position: absolute; bottom: 24px; right: 10px; z-index: 10;
+    background: rgba(255,255,255,.92); padding: 4px 10px; border-radius: 12px;
+    font: 12px/1.5 system-ui, sans-serif; color: #333; text-decoration: none;
+    box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  }
+  #renderer-toggle:hover { background: #fff; }
 </style>
 </head>
 <body>
@@ -42,8 +51,9 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
 <div id="titlebar"></div>
 <div id="legend"></div>
 <div id="error"></div>
-<script src="/static/maplibre-gl.js"></script>
-<script>
+<a id="renderer-toggle" href="/v/__VIEW_ID__?renderer=origo" title="Render this view with Origo (OpenLayers)">⇄ Origo</a>
+<script nonce="__NONCE__" src="/static/maplibre-gl.js"></script>
+<script nonce="__NONCE__">
 (function () {
   "use strict";
   var VIEW_ID = "__VIEW_ID__";
@@ -225,35 +235,260 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
 </html>
 """
 
+# Interactive Origo page. Constraints pinned by testing against Origo 2.10:
+# - Origo mounts into <div id="app-wrapper"> by default.
+# - It fetches 5 SVG icon sprites relative to the PAGE url unless svgSpritePath is
+#   overridden — without the override every toolbar icon 404s silently.
+# - A full https:// config URL is mangled by Origo's permalink parsing, so the config
+#   is fetched here and handed over as an inline object (documented, avoids a refetch
+#   and lets the page read our own `geodata` block).
+# - Origo has no diff-apply equivalent to MapLibre's setStyle({diff:true}), so instead
+#   of silently rebooting the viewer under the user, changes surface as a reload prompt.
 _ORIGO_PAGE = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Origo map view</title>
+<title>Map view (Origo)</title>
+<link rel="stylesheet" href="/static/origo/css/style.css">
 <style>
-  body { font: 15px/1.6 system-ui, sans-serif; max-width: 42rem; margin: 4rem auto; padding: 0 1rem; color: #222; }
-  code, a { word-break: break-all; }
-  h1 { font-size: 1.3rem; }
+  html, body { height: 100%; margin: 0; }
+  #app-wrapper { position: absolute; inset: 0; }
+  .chip {
+    position: absolute; z-index: 10000; background: rgba(255,255,255,.94);
+    padding: 4px 10px; border-radius: 12px; font: 12px/1.5 system-ui, sans-serif;
+    color: #333; text-decoration: none; box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  }
+  #renderer-toggle { bottom: 24px; right: 10px; }
+  #renderer-toggle:hover { background: #fff; }
+  #note { top: 10px; left: 10px; max-width: 30rem; display: none; color: #614700;
+          background: rgba(255,247,214,.96); border: 1px solid #e0cd7a; }
+  #note button { border: 0; background: none; cursor: pointer; color: #614700;
+                 font: inherit; text-decoration: underline; padding: 0 0 0 6px; }
+  #reload { top: 10px; right: 10px; display: none; cursor: pointer; border: 1px solid #1f78b4;
+            color: #1f78b4; background: #fff; font: 12px/1.5 system-ui, sans-serif; }
+  #error { position: absolute; top: 45%; left: 0; right: 0; z-index: 20000; display: none;
+           text-align: center; font: 14px/1.5 system-ui, sans-serif; color: #b00020; }
 </style>
 </head>
 <body>
-<h1>Origo renderer</h1>
-<p>Origo support is config-level in v1: this service compiles the map view into an
-Origo JSON configuration rather than serving an interactive Origo page.</p>
-<p>Configuration for this view (projection EPSG:3014, GeoJSON sources served in
-native CRS, WMS reference layers passed through):</p>
-<p><a href="/v/__VIEW_ID__/origo.json"><code>/v/__VIEW_ID__/origo.json</code></a></p>
-<p>Load it in an Origo deployment to render this view, or open the
-<a href="/v/__VIEW_ID__">interactive MapLibre page</a> instead.</p>
+<div id="app-wrapper"></div>
+<div id="note" class="chip"><span id="note-text"></span><button type="button" id="note-x">dismiss</button></div>
+<button id="reload" class="chip" type="button">Map updated — reload</button>
+<a id="renderer-toggle" class="chip" href="/v/__VIEW_ID__" title="Render this view with MapLibre">⇄ MapLibre</a>
+<div id="error"></div>
+<script nonce="__NONCE__" src="/static/origo/js/origo.min.js"></script>
+<script nonce="__NONCE__">
+(function () {
+  "use strict";
+  var VIEW_ID = "__VIEW_ID__";
+  var CONFIG_URL = "/v/" + VIEW_ID + "/origo.json";
+  var POLL_MS = 4000;
+  var revision = null;
+
+  function showNote(text) {
+    if (!text) { return; }
+    document.getElementById("note-text").textContent = text;
+    document.getElementById("note").style.display = "block";
+  }
+
+  document.getElementById("note-x").addEventListener("click", function () {
+    document.getElementById("note").style.display = "none";
+  });
+  document.getElementById("reload").addEventListener("click", function () {
+    window.location.reload();
+  });
+
+  function poll() {
+    fetch(CONFIG_URL).then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (cfg) {
+        if (cfg && cfg.geodata && revision !== null && cfg.geodata.revision !== revision) {
+          document.getElementById("reload").style.display = "block";
+        }
+      }).catch(function () { /* transient; try again next tick */ });
+  }
+
+  function boot(attempt) {
+    fetch(CONFIG_URL).then(function (res) {
+      if (!res.ok) { throw new Error("config fetch failed: " + res.status); }
+      return res.json();
+    }).then(function (cfg) {
+      var meta = cfg.geodata || {};
+      revision = meta.revision;
+      if (meta.title) { document.title = meta.title; }
+      // Inline object: Origo uses it directly instead of refetching.
+      window.origo = Origo(cfg, { svgSpritePath: "/static/origo/css/svg/", baseUrl: "/" });
+      showNote(meta.note);
+      document.getElementById("error").style.display = "none";
+      setInterval(poll, POLL_MS);
+    }).catch(function (err) {
+      var el = document.getElementById("error");
+      el.style.display = "block";
+      if (attempt < 5) {
+        el.textContent = "Loading map… (retrying: " + err.message + ")";
+        setTimeout(function () { boot(attempt + 1); }, 1500 * (attempt + 1));
+      } else {
+        el.textContent = "Failed to load map: " + err.message;
+      }
+    });
+  }
+  boot(0);
+})();
+</script>
+</body>
+</html>
+"""
+
+_LOGIN_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workspace manager — sign in</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; max-width: 26rem; margin: 6rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.25rem; }
+  input[type=password] { width: 100%; padding: 8px; font: inherit; box-sizing: border-box;
+    border: 1px solid #bbb; border-radius: 4px; }
+  button { margin-top: 10px; padding: 8px 16px; font: inherit; border: 0; border-radius: 4px;
+    background: #1f78b4; color: #fff; cursor: pointer; }
+  button:hover { background: #17608f; }
+  .error { color: #b00020; margin: 10px 0; }
+  .hint { color: #666; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>Workspace manager</h1>
+<p class="hint">Sign in with a geodata API key (the same key MCP clients use as
+<code>Authorization: Bearer …</code>). Only a signed session cookie is stored.</p>
+__ERROR__
+<form method="post" action="/login">
+  <input type="password" name="key" placeholder="API key" autofocus autocomplete="current-password">
+  <button type="submit">Sign in</button>
+</form>
+</body>
+</html>
+"""
+
+_WORKSPACES_SHELL = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workspaces</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; max-width: 46rem; margin: 3rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.25rem; display: flex; justify-content: space-between; align-items: baseline; }
+  .error { color: #b00020; margin: 10px 0; }
+  .ws { border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; margin: 12px 0; }
+  .ws.active { border-color: #1f78b4; box-shadow: 0 0 0 1px #1f78b4 inset; }
+  .ws h2 { font-size: 1.05rem; margin: 0 0 2px; display: flex; align-items: baseline; gap: 8px; }
+  .badge { font-size: 11px; font-weight: 600; color: #fff; background: #1f78b4;
+    border-radius: 10px; padding: 1px 8px; }
+  .meta { color: #666; font-size: 13px; }
+  .maps { margin: 6px 0 2px; padding-left: 18px; font-size: 14px; }
+  .maps a { color: #1f78b4; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+  .actions form { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+  button { padding: 4px 12px; font: 13px system-ui, sans-serif; border: 1px solid #bbb;
+    border-radius: 4px; background: #f7f7f7; cursor: pointer; }
+  button:hover { background: #eee; }
+  button.danger { border-color: #b00020; color: #b00020; }
+  button.danger:hover { background: #fbe9ec; }
+  input[type=text] { padding: 4px 8px; font: 13px system-ui, sans-serif;
+    border: 1px solid #bbb; border-radius: 4px; width: 11rem; }
+  details { display: inline-block; }
+  details summary { cursor: pointer; font-size: 13px; color: #b00020; list-style: none;
+    padding: 4px 12px; border: 1px solid #b00020; border-radius: 4px; }
+  details[open] summary { background: #fbe9ec; }
+  details .confirm { margin-top: 6px; }
+  .logout button { border: 0; background: none; color: #666; text-decoration: underline;
+    cursor: pointer; padding: 0; font-size: 13px; }
+  .empty { color: #666; }
+</style>
+</head>
+<body>
+<h1>Workspaces
+  <form class="logout" method="post" action="/logout"><input type="hidden" name="csrf" value="__CSRF__"><button type="submit">sign out</button></form>
+</h1>
+<p class="meta">Durable containers for an API key's layers and maps. The <b>active</b>
+workspace is where connected MCP agents read and write; activating another one takes
+effect on their next tool call.</p>
+__ERROR__
+__ITEMS__
 </body>
 </html>
 """
 
 
-def maplibre_page(view_id):
-    return _MAPLIBRE_PAGE.replace("__VIEW_ID__", view_id)
+def maplibre_page(view_id, nonce=""):
+    return _MAPLIBRE_PAGE.replace("__VIEW_ID__", view_id).replace("__NONCE__", nonce)
 
 
-def origo_page(view_id):
-    return _ORIGO_PAGE.replace("__VIEW_ID__", view_id)
+def origo_page(view_id, nonce=""):
+    return _ORIGO_PAGE.replace("__VIEW_ID__", view_id).replace("__NONCE__", nonce)
+
+
+def login_page(error=None):
+    err = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    return _LOGIN_PAGE.replace("__ERROR__", err)
+
+
+def _ws_item(w, csrf):
+    e = html.escape
+    wid = e(w["id"])
+    maps = ""
+    if w["maps"]:
+        rows = "".join(
+            f'<li><a href="/v/{e(m["view_id"])}">{e(m["title"])}</a>'
+            f' <span class="meta">({e(m["updated_at"])};'
+            f' <a href="/v/{e(m["view_id"])}?renderer=origo">origo</a>)</span></li>'
+            for m in w["maps"])
+        maps = f'<ul class="maps">{rows}</ul>'
+    active_badge = '<span class="badge">active</span>' if w["is_active"] else ""
+    activate = "" if w["is_active"] else (
+        f'<form method="post" action="/workspaces/action">'
+        f'<input type="hidden" name="csrf" value="{csrf}">'
+        f'<input type="hidden" name="workspace_id" value="{wid}">'
+        f'<input type="hidden" name="action" value="activate">'
+        f'<button type="submit">Activate</button></form>')
+    layer_word = "layer" if w["layer_count"] == 1 else "layers"
+    return f"""
+<div class="ws{' active' if w['is_active'] else ''}">
+  <h2>{e(w['name'])} {active_badge}</h2>
+  <div class="meta">{w['layer_count']} {layer_word} · schema {e(w['ws_schema'])} ·
+    created {e(w['created_at'])} · last used {e(w['last_used'])}</div>
+  {maps}
+  <div class="actions">
+    {activate}
+    <form method="post" action="/workspaces/action">
+      <input type="hidden" name="csrf" value="{csrf}">
+      <input type="hidden" name="workspace_id" value="{wid}">
+      <input type="hidden" name="action" value="rename">
+      <input type="text" name="new_name" placeholder="new name" pattern="[a-z0-9][a-z0-9_-]{{0,39}}" required>
+      <button type="submit">Rename</button>
+    </form>
+    <details>
+      <summary>Delete…</summary>
+      <form class="confirm" method="post" action="/workspaces/action">
+        <input type="hidden" name="csrf" value="{csrf}">
+        <input type="hidden" name="workspace_id" value="{wid}">
+        <input type="hidden" name="action" value="delete">
+        <button type="submit" class="danger">Really delete "{e(w['name'])}" and its {w['layer_count']} {layer_word}</button>
+      </form>
+    </details>
+  </div>
+</div>"""
+
+
+def workspaces_page(workspaces, csrf, error=None):
+    err = f'<p class="error">{html.escape(error)}</p>' if error else ""
+    if workspaces:
+        items = "".join(_ws_item(w, html.escape(csrf)) for w in workspaces)
+    else:
+        items = ('<p class="empty">No workspaces yet — they appear when an MCP agent '
+                 'connects with this API key.</p>')
+    return (_WORKSPACES_SHELL
+            .replace("__CSRF__", html.escape(csrf))
+            .replace("__ERROR__", err)
+            .replace("__ITEMS__", items))

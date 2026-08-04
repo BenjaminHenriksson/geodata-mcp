@@ -1,5 +1,19 @@
 name: geodata-mcp-v2
 
+x-appenv: &appenv
+  DATABASE_URL_APP: postgresql://geodata_app:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  DATABASE_URL_RO: postgresql://agent_ro:${AGENT_RO_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  DATABASE_URL_WS: postgresql://agent_ws:${AGENT_WS_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+  S3_ENDPOINT: http://minio:9000
+  S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+  S3_BUCKET: exports
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+  EMBED_URL: http://worker:8100/embed
+  EMBED_MODEL: ${EMBED_MODEL:-unsloth/embeddinggemma-300m}
+  EMBED_DIM: "${EMBED_DIM:-256}"
+
 services:
   postgres:
     restart: unless-stopped
@@ -48,21 +62,10 @@ services:
   mcp:
     restart: unless-stopped
     build: ./services/mcp
-    environment: &appenv
-      DATABASE_URL_APP: postgresql://geodata_app:${APP_DB_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      DATABASE_URL_RO: postgresql://agent_ro:${AGENT_RO_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      DATABASE_URL_WS: postgresql://agent_ws:${AGENT_WS_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
-      S3_ENDPOINT: http://minio:9000
-      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
-      S3_BUCKET: exports
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      EMBED_URL: http://worker:8100/embed
-      EMBED_MODEL: ${EMBED_MODEL:-unsloth/embeddinggemma-300m}
-      EMBED_DIM: "${EMBED_DIM:-256}"
-      # Idle hours before the worker drops a session's workspace schema.
-      WORKSPACE_TTL_HOURS: "${WORKSPACE_TTL_HOURS:-72}"
+    environment:
+      <<: *appenv
+      # Bearer keys for /mcp (comma-separated raw keys; hashed at startup).
+      GEODATA_API_KEYS: ${GEODATA_API_KEYS:?set in .env — auth is not optional}
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,7 +95,10 @@ services:
   viewer:
     restart: unless-stopped
     build: ./services/viewer
-    environment: *appenv
+    environment:
+      <<: *appenv
+      # Signs the workspace-manager login cookie (any long random string).
+      VIEWER_SECRET: ${VIEWER_SECRET:?set in .env}
     depends_on:
       postgres:
         condition: service_healthy

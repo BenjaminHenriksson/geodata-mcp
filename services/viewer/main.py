@@ -1,15 +1,18 @@
-"""Viewer service: map pages, MapLibre/Origo compilation, GeoJSON + MVT endpoints."""
+"""Viewer service: map pages, MapLibre/Origo compilation, GeoJSON + MVT endpoints,
+and the auth-gated workspace manager UI."""
 import os
+import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import compile_maplibre
 import compile_origo
 import dbq
 import page
+import viewer_auth
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -27,6 +30,48 @@ async def lifespan(_app):
 
 app = FastAPI(title="geodata viewer", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")
+
+# Content-Security-Policy for the HTML pages. This is load-bearing, not hardening
+# theatre: Origo renders layer titles via createContextualFragment and feature-info
+# values via innerHTML, and feature values are substituted client-side from the
+# GeoJSON, so no amount of server-side escaping can reach them. Without
+# 'unsafe-inline' in script-src, neither an injected <script> nor an inline
+# `onerror=` handler executes; our own inline scripts are allowed by per-response
+# nonce. That matters because the map pages share an origin with the cookie-authed
+# /workspaces manager.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'nonce-{nonce}'{eval}; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob: https:; "
+    "connect-src 'self' https:; "
+    "worker-src 'self' blob:; "
+    "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+)
+
+
+def _html(body: str, nonce: str, status_code: int = 200,
+          allow_eval: bool = False) -> HTMLResponse:
+    """HTML response with CSP.
+
+    `allow_eval` is only for the MapLibre page: MapLibre compiles style expressions
+    with `new Function` inside its blob worker, which CSP blocks silently (the map
+    never finishes loading, with no error event). It is safe to grant there and
+    withheld everywhere else — 'unsafe-inline' stays out in every case, so injected
+    markup and inline handlers never execute, which is the vector that matters. The
+    Origo page in particular keeps the strict policy, since Origo is the renderer
+    that injects titles as raw HTML.
+    """
+    return HTMLResponse(body, status_code=status_code, headers={
+        "Content-Security-Policy": _CSP.format(
+            nonce=nonce, eval=" 'unsafe-eval'" if allow_eval else ""),
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+    })
+
+
+def _nonce() -> str:
+    return secrets.token_urlsafe(16)
 
 
 def _etag_matches(if_none_match, etag):
@@ -89,6 +134,100 @@ def healthz():
     return {"ok": True}
 
 
+# ── workspace manager UI ─────────────────────────────────────────────────────
+
+def _manager_key_id(request: Request):
+    """api_key_id from a valid manager cookie (re-checked against the DB), or None."""
+    key_id = viewer_auth.parse_cookie(request.cookies.get(viewer_auth.COOKIE_NAME))
+    if key_id is None:
+        return None
+    with dbq.get_pool().connection() as conn:
+        return key_id if dbq.api_key_valid(conn, key_id) else None
+
+
+def _require_manager_enabled():
+    if not viewer_auth.enabled():
+        raise HTTPException(status_code=503,
+                            detail="workspace manager disabled — set VIEWER_SECRET in .env")
+
+
+@app.get("/")
+def index():
+    return RedirectResponse("/workspaces", status_code=302)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_form():
+    _require_manager_enabled()
+    n = _nonce()
+    return _html(page.login_page(), n)
+
+
+@app.post("/login", response_class=HTMLResponse)
+def login(key: str = Form("")):
+    _require_manager_enabled()
+    key = (key or "").strip()
+    key_id = None
+    if key:
+        with dbq.get_pool().connection() as conn:
+            key_id = dbq.api_key_id_for_hash(conn, viewer_auth.hash_key(key))
+    if key_id is None:
+        return _html(page.login_page("Unknown or disabled API key."), _nonce(), status_code=401)
+    resp = RedirectResponse("/workspaces", status_code=303)
+    resp.set_cookie(viewer_auth.COOKIE_NAME, viewer_auth.make_cookie(key_id),
+                    max_age=viewer_auth.COOKIE_TTL_S, httponly=True, samesite="lax")
+    return resp
+
+
+@app.post("/logout")
+def logout():
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie(viewer_auth.COOKIE_NAME)
+    return resp
+
+
+@app.get("/workspaces", response_class=HTMLResponse)
+def workspaces(request: Request):
+    _require_manager_enabled()
+    key_id = _manager_key_id(request)
+    if key_id is None:
+        return RedirectResponse("/login", status_code=302)
+    with dbq.get_pool().connection() as conn:
+        rows = dbq.workspaces_for_key(conn, key_id)
+    return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id)), _nonce())
+
+
+@app.post("/workspaces/action", response_class=HTMLResponse)
+def workspaces_action(request: Request, action: str = Form(""),
+                      workspace_id: str = Form(""), new_name: str = Form(""),
+                      csrf: str = Form("")):
+    _require_manager_enabled()
+    key_id = _manager_key_id(request)
+    if key_id is None:
+        return RedirectResponse("/login", status_code=302)
+    if not viewer_auth.csrf_ok(key_id, csrf):
+        raise HTTPException(status_code=403, detail="bad csrf token")
+
+    error = None
+    with dbq.get_pool().connection() as conn:
+        row = dbq.workspace_owned(conn, key_id, workspace_id)
+        if row is None:
+            error = "unknown workspace"
+        elif action == "activate":
+            dbq.activate_workspace(conn, key_id, row[0])
+        elif action == "rename":
+            error = dbq.rename_workspace(conn, key_id, row[0], (new_name or "").strip())
+        elif action == "delete":
+            dbq.delete_workspace(conn, key_id, row[0], row[2])
+        else:
+            error = "unknown action"
+        if error:
+            rows = dbq.workspaces_for_key(conn, key_id)
+            return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id), error=error),
+                         _nonce(), status_code=400)
+    return RedirectResponse("/workspaces", status_code=303)
+
+
 @app.get("/v/{view_id}/style.json")
 def style_json(view_id: str, request: Request):
     with dbq.get_pool().connection() as conn:
@@ -117,9 +256,10 @@ def view_page(view_id: str, renderer: str = Query(default="maplibre")):
         raise HTTPException(status_code=400, detail="renderer must be 'maplibre' or 'origo'")
     with dbq.get_pool().connection() as conn:
         _load_view(conn, view_id)
+    n = _nonce()
     if renderer == "origo":
-        return HTMLResponse(page.origo_page(view_id))
-    return HTMLResponse(page.maplibre_page(view_id))
+        return _html(page.origo_page(view_id, n), n)
+    return _html(page.maplibre_page(view_id, n), n, allow_eval=True)
 
 
 @app.get("/data/{layer}.geojson")

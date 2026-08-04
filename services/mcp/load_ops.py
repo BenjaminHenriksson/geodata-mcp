@@ -35,7 +35,7 @@ def _unique_slug(conn, base: str) -> str:
         slug = f"{base}_{n}"
 
 
-def register(session_id: str, kind: str, url: str | None, title: str,
+def register(workspace_id: str, kind: str, url: str | None, title: str,
              slug: str | None, license: str, notes: str) -> dict:
     if kind not in SOURCE_KINDS:
         return {"error": f"kind must be one of {', '.join(SOURCE_KINDS)}"}
@@ -53,7 +53,7 @@ def register(session_id: str, kind: str, url: str | None, title: str,
                 (kind, url),
             ).fetchone()
             if existing:
-                job_id = (db.enqueue_job(HARVEST_JOB[kind], {"source_id": existing[0]}, session_id)
+                job_id = (db.enqueue_job(HARVEST_JOB[kind], {"source_id": existing[0]}, workspace_id)
                           if kind in HARVEST_JOB else None)
                 return {"source_id": existing[0], "slug": existing[1], "job_id": job_id,
                         "note": "source already registered — re-harvesting to refresh its "
@@ -63,13 +63,13 @@ def register(session_id: str, kind: str, url: str | None, title: str,
         row = conn.execute(
             """INSERT INTO catalog.sources (slug, kind, url, title, description, license, added_by, trust)
                VALUES (%s, %s, %s, %s, %s, %s, %s, 'agent') RETURNING id""",
-            (final_slug, kind, url, title, notes or "", license or "", session_id),
+            (final_slug, kind, url, title, notes or "", license or "", workspace_id),
         ).fetchone()
         source_id = str(row[0])
     job_id = None
     dataset_id = None
     if kind in HARVEST_JOB:
-        job_id = db.enqueue_job(HARVEST_JOB[kind], {"source_id": source_id}, session_id)
+        job_id = db.enqueue_job(HARVEST_JOB[kind], {"source_id": source_id}, workspace_id)
     elif kind in ("pdf", "file"):
         # No harvest step for single-artifact sources: the dataset row exists immediately
         # so op='ingest' can target it (contract §MCP server, load op register).
@@ -126,7 +126,7 @@ def _ref_table_claim(qualified: str, dataset_id: str) -> str | None:
         return "an existing table not registered to any dataset" if exists else None
 
 
-def ingest(session_id: str, dataset_id: str, table_name: str | None, target: str) -> dict:
+def ingest(workspace_id: str, dataset_id: str, table_name: str | None, target: str) -> dict:
     if target not in ("ref", "workspace"):
         return {"error": "target must be 'ref' or 'workspace'"}
     ds = _dataset_and_source(dataset_id)
@@ -149,7 +149,7 @@ def ingest(session_id: str, dataset_id: str, table_name: str | None, target: str
 
     if job_kind != "ingest_pdf":
         if target == "workspace":
-            target_schema = sessions.ensure_ws_schema(session_id)
+            target_schema = sessions.ensure_ws_schema(workspace_id)
         else:
             target_schema = "ref"
         tname = table_name or slugify(ds["external_id"].split(":")[-1] or ds["title"], 58)
@@ -165,7 +165,7 @@ def ingest(session_id: str, dataset_id: str, table_name: str | None, target: str
                              "pass an explicit table_name to load this dataset alongside it"}
         payload.update({"target_schema": target_schema, "table_name": tname})
 
-    job_id = db.enqueue_job(job_kind, payload, session_id)
+    job_id = db.enqueue_job(job_kind, payload, workspace_id)
     job = db.wait_for_job(job_id, timeout_s=8.0)
     reply = {"job_id": job_id, "kind": job_kind, "status": job["status"] if job else "queued"}
     if job:
@@ -183,7 +183,7 @@ def ingest(session_id: str, dataset_id: str, table_name: str | None, target: str
 _GEO_KEYS = ("wkt", "lon", "lat")
 
 
-def inline(session_id: str, rows: list, table_name: str, source: str | None,
+def inline(workspace_id: str, rows: list, table_name: str, source: str | None,
            crs: str | None = None) -> dict:
     if not source:
         return {"error": "source is mandatory for inline data — state where these rows come from"}
@@ -208,7 +208,7 @@ def inline(session_id: str, rows: list, table_name: str, source: str | None,
         return {"error": "rows contain no columns — provide attributes and/or 'wkt' or 'lon'/'lat'"}
     col_types = {c: geometry.infer_pg_type([r.get(c) for r in rows]) for c in attr_cols}
 
-    ws = sessions.ensure_ws_schema(session_id)
+    ws = sessions.ensure_ws_schema(workspace_id)
     table = sqlguard.qualified(ws, table_name)
 
     col_defs = [
@@ -240,7 +240,7 @@ def inline(session_id: str, rows: list, table_name: str, source: str | None,
     try:
         with db.ws_pool().connection() as conn:
             with conn.transaction():
-                conn.execute("SELECT set_config('app.session_id', %s, true)", (session_id,))
+                conn.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id,))
                 conn.execute(pgsql.SQL("CREATE TABLE {} ({})").format(
                     table, pgsql.SQL(", ").join(col_defs)))
                 for r in rows:
@@ -260,16 +260,16 @@ def inline(session_id: str, rows: list, table_name: str, source: str | None,
                 "hint": "check WKT validity / lon-lat order (lon first) and that the table does not already exist"}
 
     obj = f"{ws}.{table_name}"
-    provenance.add("inline", session_id, object_ref=obj,
+    provenance.add("inline", workspace_id, object_ref=obj,
                    details={"source": source, "rows": len(rows), "crs_in": srid_in,
                             "columns": col_types, "geometry": has_geom})
     return {"table": obj, "row_count": len(rows),
             "columns": list(col_types) + (["geom"] if has_geom else [])}
 
 
-def embed(session_id: str) -> dict:
+def embed(workspace_id: str) -> dict:
     """Enqueue an embed_catalog job (idempotent: only missing/model-mismatched rows)."""
-    job_id = db.enqueue_job("embed_catalog", {}, session_id)
+    job_id = db.enqueue_job("embed_catalog", {}, workspace_id)
     return {"job_id": job_id,
             "note": "embedding catalog + doc chunks with EmbeddingGemma — first run downloads "
                     "the model and can take minutes; poll with op='status'"}

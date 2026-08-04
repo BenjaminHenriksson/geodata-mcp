@@ -1,5 +1,5 @@
 """Implementation of the layer tool — the ONLY write path; every op records provenance
-and runs its writes as agent_ws inside a transaction stamped with app.session_id."""
+and runs its writes as agent_ws inside a transaction stamped with app.workspace_id."""
 
 from psycopg import sql as pgsql
 from psycopg.rows import dict_row
@@ -12,8 +12,8 @@ import sessions
 import sqlguard
 
 
-def _stamp(conn, session_id: str) -> None:
-    conn.execute("SELECT set_config('app.session_id', %s, true)", (session_id,))
+def _stamp(conn, workspace_id: str) -> None:
+    conn.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id,))
 
 
 def _table_columns(conn, schema: str, table: str) -> list[dict]:
@@ -58,7 +58,7 @@ def _upsert_meta(schema: str, table: str, style=None, notes=None, popup=None,
         )
 
 
-def create(session_id: str, name: str, sql_text: str, notes: str = "",
+def create(workspace_id: str, name: str, sql_text: str, notes: str = "",
            style: dict | None = None) -> dict:
     if not name or not sqlguard.LAYER_NAME_RE.match(name):
         return {"error": "layer name must match ^[a-z][a-z0-9_]{0,59}$"}
@@ -74,12 +74,12 @@ def create(session_id: str, name: str, sql_text: str, notes: str = "",
         return {"error": f"SQL error: {str(e).strip()}",
                 "hint": "the SELECT must run as the read-only role first; check tables/columns"}
 
-    ws = sessions.ensure_ws_schema(session_id)
+    ws = sessions.ensure_ws_schema(workspace_id)
     table = sqlguard.qualified(ws, name)
     try:
         with db.ws_pool().connection() as conn:
             with conn.transaction():
-                _stamp(conn, session_id)
+                _stamp(conn, workspace_id)
                 if _table_exists(conn, ws, name):
                     return {"error": f"table {ws}.{name} already exists — drop it or pick another name"}
                 conn.execute(pgsql.SQL("CREATE TABLE {} AS {}").format(table, pgsql.SQL(cleaned)))
@@ -96,14 +96,14 @@ def create(session_id: str, name: str, sql_text: str, notes: str = "",
                         "cast ambiguous columns explicitly"}
 
     _upsert_meta(ws, name, style=style, notes=notes or None)
-    provenance.add("layer_create", session_id, object_ref=f"{ws}.{name}",
+    provenance.add("layer_create", workspace_id, object_ref=f"{ws}.{name}",
                    sql_text=cleaned, input_tables=input_tables,
                    details={"notes": notes or "", "row_count": int(row_count)})
     return {"table": f"{ws}.{name}", "row_count": int(row_count),
             "columns": [{"name": c["name"], "type": c["data_type"]} for c in cols]}
 
 
-def update(session_id: str, name: str, key_column: str, values: dict) -> dict:
+def update(workspace_id: str, name: str, key_column: str, values: dict) -> dict:
     if not name or not sqlguard.LAYER_NAME_RE.match(name):
         return {"error": "layer name must match ^[a-z][a-z0-9_]{0,59}$"}
     if not key_column or not sqlguard.IDENT_RE.match(key_column):
@@ -112,8 +112,7 @@ def update(session_id: str, name: str, key_column: str, values: dict) -> dict:
             not all(isinstance(v, dict) for v in values.values()):
         return {"error": "values must be {key: {column: value, ...}, ...} with at least one key"}
 
-    ws = sessions.ws_schema_for(session_id)
-    sessions.touch_session(session_id)
+    ws = sessions.ws_schema_for(workspace_id)
     table = sqlguard.qualified(ws, name)
 
     data_cols: list[str] = []
@@ -130,7 +129,7 @@ def update(session_id: str, name: str, key_column: str, values: dict) -> dict:
     try:
         with db.ws_pool().connection() as conn:
             with conn.transaction():
-                _stamp(conn, session_id)
+                _stamp(conn, workspace_id)
                 if not _table_exists(conn, ws, name):
                     return {"error": f"no table {ws}.{name} — create it with layer op='create' first"}
                 existing = {c["name"]: c for c in _table_columns(conn, ws, name)}
@@ -189,7 +188,7 @@ def update(session_id: str, name: str, key_column: str, values: dict) -> dict:
         return {"error": f"layer update failed: {str(e).strip()}",
                 "hint": "values are matched on key_column cast to text; check keys and value types"}
 
-    provenance.add("layer_update", session_id, object_ref=f"{ws}.{name}",
+    provenance.add("layer_update", workspace_id, object_ref=f"{ws}.{name}",
                    sql_text=sql_for_ledger,
                    details={"values": values, "key_column": key_column, "columns_added": added,
                             "rows_matched": updated})
@@ -197,10 +196,9 @@ def update(session_id: str, name: str, key_column: str, values: dict) -> dict:
             "keys_given": len(values)}
 
 
-def style(session_id: str, name: str, style: dict | None = None, popup: list | None = None,
+def style(workspace_id: str, name: str, style: dict | None = None, popup: list | None = None,
           label: str | None = None, visible: bool | None = None, notes: str | None = None) -> dict:
-    ws = sessions.ws_schema_for(session_id)
-    sessions.touch_session(session_id)
+    ws = sessions.ws_schema_for(workspace_id)
     # Styling/annotating shared ref layers is legitimate (they are read-only open data,
     # and layer_meta is presentation metadata, not the data itself), so accept an
     # explicit 'ref.<table>' here as well as a bare name in the caller's own workspace.
@@ -215,16 +213,15 @@ def style(session_id: str, name: str, style: dict | None = None, popup: list | N
             "visible": visible}
 
 
-def rename(session_id: str, name: str, new_name: str) -> dict:
+def rename(workspace_id: str, name: str, new_name: str) -> dict:
     for n in (name, new_name):
         if not n or not sqlguard.LAYER_NAME_RE.match(n):
             return {"error": "names must match ^[a-z][a-z0-9_]{0,59}$"}
-    ws = sessions.ws_schema_for(session_id)
-    sessions.touch_session(session_id)
+    ws = sessions.ws_schema_for(workspace_id)
     try:
         with db.ws_pool().connection() as conn:
             with conn.transaction():
-                _stamp(conn, session_id)
+                _stamp(conn, workspace_id)
                 if not _table_exists(conn, ws, name):
                     return {"error": f"no table {ws}.{name}"}
                 if _table_exists(conn, ws, new_name):
@@ -237,20 +234,19 @@ def rename(session_id: str, name: str, new_name: str) -> dict:
         conn.execute(
             "UPDATE app.layer_meta SET table_name = %s WHERE schema_name = %s AND table_name = %s",
             (new_name, ws, name))
-    provenance.add("layer_rename", session_id, object_ref=f"{ws}.{new_name}",
+    provenance.add("layer_rename", workspace_id, object_ref=f"{ws}.{new_name}",
                    details={"from": f"{ws}.{name}", "to": f"{ws}.{new_name}"})
     return {"table": f"{ws}.{new_name}", "renamed_from": f"{ws}.{name}"}
 
 
-def drop(session_id: str, name: str) -> dict:
+def drop(workspace_id: str, name: str) -> dict:
     if not name or not sqlguard.LAYER_NAME_RE.match(name):
         return {"error": "layer name must match ^[a-z][a-z0-9_]{0,59}$"}
-    ws = sessions.ws_schema_for(session_id)
-    sessions.touch_session(session_id)
+    ws = sessions.ws_schema_for(workspace_id)
     try:
         with db.ws_pool().connection() as conn:
             with conn.transaction():
-                _stamp(conn, session_id)
+                _stamp(conn, workspace_id)
                 if not _table_exists(conn, ws, name):
                     return {"error": f"no table {ws}.{name}"}
                 conn.execute(pgsql.SQL("DROP TABLE {}").format(sqlguard.qualified(ws, name)))
@@ -259,13 +255,12 @@ def drop(session_id: str, name: str) -> dict:
     with db.app_pool().connection() as conn:
         conn.execute("DELETE FROM app.layer_meta WHERE schema_name = %s AND table_name = %s",
                      (ws, name))
-    provenance.add("layer_drop", session_id, object_ref=f"{ws}.{name}")
+    provenance.add("layer_drop", workspace_id, object_ref=f"{ws}.{name}")
     return {"dropped": f"{ws}.{name}"}
 
 
-def list_layers(session_id: str) -> dict:
-    ws = sessions.ws_schema_for(session_id)
-    sessions.touch_session(session_id)
+def list_layers(workspace_id: str) -> dict:
+    ws = sessions.ws_schema_for(workspace_id)
     out = {"workspace_schema": ws, "workspace_layers": [], "ref_layers": []}
     with db.app_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:

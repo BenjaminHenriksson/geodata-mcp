@@ -212,7 +212,7 @@ def finalize_load(conn, job, schema: str, table: str, dataset_id=None, details=N
             cur,
             kind="load",
             object_ref=f"{schema}.{table}",
-            session_id=job.get("session_id"),
+            workspace_id=job.get("workspace_id"),
             input_tables=[],
             job_id=job["id"],
             details=details or {},

@@ -70,12 +70,31 @@ CREATE INDEX chunks_embedding_idx ON doc.chunks USING hnsw (embedding vector_cos
 
 -- ─── app ────────────────────────────────────────────────────────────────────
 
-CREATE TABLE app.sessions (
-  session_id text PRIMARY KEY,
-  ws_schema  text UNIQUE NOT NULL CHECK (ws_schema ~ '^ws_[a-f0-9]{8}$'),
+-- API keys are the durable principal: the raw key travels as `Authorization: Bearer`
+-- and only its SHA-256 digest is stored, so no row here is a replayable credential.
+CREATE TABLE app.api_keys (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  key_hash   text UNIQUE NOT NULL CHECK (key_hash ~ '^[a-f0-9]{64}$'),
+  name       text NOT NULL DEFAULT '',
+  disabled   boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now(),
-  last_seen  timestamptz NOT NULL DEFAULT now()
+  last_used  timestamptz
 );
+
+-- Durable, named workspaces owned by an API key. Exactly one is active per key at a
+-- time (partial unique index below); every MCP call reads/writes the active one, so a
+-- reconnecting client lands in the same workspace instead of an empty schema.
+CREATE TABLE app.workspaces (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  api_key_id uuid NOT NULL REFERENCES app.api_keys(id) ON DELETE CASCADE,
+  name       text NOT NULL CHECK (name ~ '^[a-z0-9][a-z0-9_-]{0,39}$'),
+  ws_schema  text UNIQUE NOT NULL CHECK (ws_schema ~ '^ws_[a-f0-9]{8}$'),
+  is_active  boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_used  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (api_key_id, name)
+);
+CREATE UNIQUE INDEX workspaces_one_active_idx ON app.workspaces (api_key_id) WHERE is_active;
 
 CREATE TABLE app.jobs (
   id          bigserial PRIMARY KEY,
@@ -85,7 +104,7 @@ CREATE TABLE app.jobs (
   status      text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error')),
   result      jsonb,
   error       text,
-  session_id  text,
+  workspace_id text,
   attempts    int NOT NULL DEFAULT 0,
   created_at  timestamptz NOT NULL DEFAULT now(),
   started_at  timestamptz,
@@ -95,7 +114,7 @@ CREATE INDEX jobs_queued_idx ON app.jobs (status, created_at) WHERE status = 'qu
 
 CREATE TABLE app.map_views (
   view_id    text PRIMARY KEY CHECK (view_id ~ '^v_[a-f0-9]{24}$'),
-  session_id text,
+  workspace_id text,
   title      text NOT NULL DEFAULT '',
   spec       jsonb NOT NULL,
   version    int NOT NULL DEFAULT 1,
@@ -117,7 +136,7 @@ CREATE TABLE app.layer_meta (
 CREATE TABLE app.provenance (
   id           bigserial PRIMARY KEY,
   ts           timestamptz NOT NULL DEFAULT now(),
-  session_id   text,
+  workspace_id text,
   kind         text NOT NULL CHECK (kind IN ('load','layer_create','layer_update','layer_drop',
                                              'layer_rename','ddl_event','export','inline')),
   object_ref   text,
@@ -131,7 +150,7 @@ CREATE INDEX provenance_object_idx ON app.provenance (object_ref, ts);
 CREATE TABLE app.query_log (
   query_id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   ts                timestamptz NOT NULL DEFAULT now(),
-  session_id        text,
+  workspace_id      text,
   sql_text          text NOT NULL,
   referenced_tables text[],
   row_count         int,
@@ -146,8 +165,9 @@ REVOKE UPDATE, DELETE, TRUNCATE ON app.provenance FROM PUBLIC, geodata_app, agen
 
 -- Agent read access inside `app` is granted per table, never schema-wide (see 03_schemas.sql).
 -- The audit tables are readable — that is the point of the auditing use case, and the
--- session_id they carry is a hash, not a usable credential. app.sessions stays private so
--- session bookkeeping is not enumerable from the query tool.
+-- workspace_id they carry is a plain identifier, not a credential (auth is the API key).
+-- app.api_keys and app.workspaces stay private so key digests and other principals'
+-- workspace inventory are not enumerable from the query tool.
 GRANT SELECT ON app.provenance, app.query_log, app.jobs, app.map_views, app.layer_meta
   TO agent_ro, agent_ws;
 -- The event-trigger backstop function (SECURITY DEFINER, owner postgres) inserts regardless

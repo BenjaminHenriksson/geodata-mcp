@@ -53,7 +53,8 @@ def _normalize_layers(layers, ws: str) -> tuple[list[dict] | None, str | None, l
                                   f"'<your ws schema>.<table>' or 'wms:<dataset uuid>'"), warnings
                 schema = m.group(1)
                 if schema.startswith("ws_") and schema != ws:
-                    return None, f"{ref!r} is another session's workspace — only {ws}.* is yours", warnings
+                    return None, (f"{ref!r} is another workspace — your active workspace is {ws}. "
+                              f"Switch with workspace(op='use') or use {ws}.<table>"), warnings
                 exists = conn.execute("SELECT to_regclass(%s)", (ref,)).fetchone()
                 if exists is None or exists[0] is None:
                     return None, f"table {ref!r} does not exist — check layer(op='list')", warnings
@@ -110,12 +111,11 @@ def _auto_extent(layer_refs: list[str]) -> list[float] | None:
     return [round(xmin - dx, 2), round(ymin - dy, 2), round(xmax + dx, 2), round(ymax + dy, 2)]
 
 
-def upsert(session_id: str, view_id: str | None, title: str | None, layers,
+def upsert(workspace_id: str, view_id: str | None, title: str | None, layers,
            basemap: str, extent_3014, legend: bool) -> dict:
     if basemap not in BASEMAPS and not WMS_REF_RE.match(str(basemap)):
         return {"error": f"basemap must be one of {BASEMAPS} or 'wms:<dataset uuid>'"}
-    ws = sessions.ws_schema_for(session_id)
-    sessions.touch_session(session_id)
+    ws = sessions.ws_schema_for(workspace_id)
     clean_layers, err, warnings = _normalize_layers(layers, ws)
     if err:
         return {"error": err}
@@ -144,22 +144,22 @@ def upsert(session_id: str, view_id: str | None, title: str | None, layers,
         "legend": bool(legend),
     }
     with db.app_pool().connection() as conn:
-        # The DO UPDATE is owner-scoped: a view_id belonging to another session must not be
+        # The DO UPDATE is owner-scoped: a view_id belonging to another workspace must not be
         # silently rewritten under the user watching it (view ids travel as shareable URLs).
         row = conn.execute(
-            """INSERT INTO app.map_views (view_id, session_id, title, spec)
+            """INSERT INTO app.map_views (view_id, workspace_id, title, spec)
                VALUES (%s, %s, %s, %s)
                ON CONFLICT (view_id) DO UPDATE SET
                  spec = EXCLUDED.spec,
                  title = EXCLUDED.title,
                  version = app.map_views.version + 1,
                  updated_at = now()
-               WHERE app.map_views.session_id IS NOT DISTINCT FROM EXCLUDED.session_id
+               WHERE app.map_views.workspace_id IS NOT DISTINCT FROM EXCLUDED.workspace_id
                RETURNING version""",
-            (vid, session_id, title or "", Jsonb(spec)),
+            (vid, workspace_id, title or "", Jsonb(spec)),
         ).fetchone()
         if row is None:
-            return {"error": f"map view {vid!r} belongs to another session — "
+            return {"error": f"map view {vid!r} belongs to another workspace — "
                              "omit view_id to create your own view"}
         version = int(row[0])
     out = {"view_id": vid, "url": f"{config.PUBLIC_BASE_URL}/v/{vid}", "version": version,
@@ -187,14 +187,14 @@ def get(view_id: str) -> dict:
     return out
 
 
-def list_views(session_id: str) -> dict:
+def list_views(workspace_id: str) -> dict:
     with db.app_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """SELECT view_id, title, version, created_at, updated_at
-                     FROM app.map_views WHERE session_id = %s
+                     FROM app.map_views WHERE workspace_id = %s
                     ORDER BY updated_at DESC LIMIT 50""",
-                (session_id,),
+                (workspace_id,),
             )
             rows = cur.fetchall()
     views = []

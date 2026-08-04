@@ -115,7 +115,7 @@ def insert_provenance(
     *,
     kind: str,
     object_ref: str,
-    session_id=None,
+    workspace_id=None,
     sql_text=None,
     input_tables=None,
     job_id=None,
@@ -123,12 +123,12 @@ def insert_provenance(
 ) -> None:
     cur.execute(
         """
-        INSERT INTO app.provenance (session_id, kind, object_ref, sql_text,
+        INSERT INTO app.provenance (workspace_id, kind, object_ref, sql_text,
                                     input_tables, job_id, details)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         """,
         (
-            session_id,
+            workspace_id,
             kind,
             object_ref,
             sql_text,

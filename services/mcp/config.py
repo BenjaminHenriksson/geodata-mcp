@@ -8,6 +8,11 @@ DATABASE_URL_WS = os.environ["DATABASE_URL_WS"]
 
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8080").rstrip("/")
 
+# Comma-separated raw API keys; hashed and upserted into app.api_keys at startup.
+# The server refuses to start without at least one (auth is not optional).
+GEODATA_API_KEYS = [k.strip() for k in os.environ.get("GEODATA_API_KEYS", "").split(",")
+                    if k.strip()]
+
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://minio:9000")
 S3_PUBLIC_ENDPOINT = os.environ.get("S3_PUBLIC_ENDPOINT", "http://localhost:9000")
 S3_BUCKET = os.environ.get("S3_BUCKET", "exports")

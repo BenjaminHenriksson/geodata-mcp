@@ -1,9 +1,21 @@
-"""Geodata MCP server — agent-facing control plane (FastMCP, streamable HTTP at /mcp)."""
+"""Geodata MCP server — agent-facing control plane (FastMCP, streamable HTTP at /mcp).
 
+Every /mcp request must carry `Authorization: Bearer <api key>` (401 otherwise, enforced
+by BearerAuthMiddleware below). Identity is the API key; all state lives in the key's
+durable, named workspaces (see sessions.py) — reconnects land in the same workspace.
+"""
+
+import sys
+import threading
+import time
+
+import anyio.to_thread
+import uvicorn
 from mcp.server.fastmcp import Context, FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+import config
 import export_ops
 import layer_ops
 import load_ops
@@ -11,10 +23,12 @@ import map_ops
 import query_ops
 import search_ops
 import sessions
+import workspace_ops
 
-# Stateful streamable HTTP: the server issues mcp-session-id on initialize and clients echo
-# it on every call — that header is what maps a session to its ws_* workspace schema.
-# (stateless_http=True would collapse every client into one shared workspace.)
+# Stateful streamable HTTP: the server issues mcp-session-id on initialize and clients
+# echo it back — that keeps the *transport* session alive. It no longer carries any
+# identity: workspaces are keyed on the API key, so a fresh transport session (every
+# reconnect) still resolves to the same durable workspace.
 mcp = FastMCP(
     "geodata",
     host="0.0.0.0",
@@ -23,8 +37,63 @@ mcp = FastMCP(
 )
 
 
-def _sid(ctx: Context | None) -> str:
-    return sessions.session_id_from_context(ctx if ctx is not None else mcp.get_context())
+class BearerAuthMiddleware:
+    """Pure-ASGI bearer check for /mcp (Starlette's BaseHTTPMiddleware buffers
+    responses, which does not mix well with SSE streams — so raw ASGI it is).
+
+    Valid key digests are cached for CACHE_TTL_S so the hot path costs one dict hit;
+    disabling a key therefore takes effect within the TTL, not instantly.
+    """
+
+    CACHE_TTL_S = 30.0
+
+    def __init__(self, app):
+        self.app = app
+        self._cache: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def _check(self, raw_key: str) -> bool:
+        kh = sessions.hash_key(raw_key)
+        now = time.monotonic()
+        with self._lock:
+            exp = self._cache.get(kh)
+            if exp is not None and exp > now:
+                return True
+        ok = sessions.key_id_for_hash(kh) is not None
+        if ok:
+            with self._lock:
+                self._cache[kh] = now + self.CACHE_TTL_S
+        return ok
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope["path"].startswith("/mcp"):
+            return await self.app(scope, receive, send)
+        auth = None
+        for name, value in scope.get("headers") or []:
+            if name == b"authorization":
+                auth = value.decode("latin-1")
+                break
+        raw = sessions.bearer_token({"authorization": auth}) if auth else None
+        ok = False
+        if raw:
+            ok = await anyio.to_thread.run_sync(self._check, raw)
+        if not ok:
+            response = JSONResponse(
+                {"error": "unauthorized — send 'Authorization: Bearer <api key>'"},
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+            return await response(scope, receive, send)
+        return await self.app(scope, receive, send)
+
+
+def _ws(ctx: Context | None) -> sessions.Workspace:
+    """The caller's active workspace (raises sessions.AuthError)."""
+    return sessions.resolve(ctx if ctx is not None else mcp.get_context())
+
+
+def _auth_error(e: Exception) -> dict:
+    return {"error": f"auth: {str(e).strip()}"}
 
 
 @mcp.custom_route("/healthz", methods=["GET"])
@@ -57,13 +126,15 @@ def search(query: str | None = None, id: str | None = None, kind: str | None = N
     workspace schema; geometry column 'geom', SRID 3014 (SWEREF 99 17 15, metres).
     """
     try:
+        _ws(ctx)   # resolve the principal first: same auth path as every other tool
         if id:
             return search_ops.dataset_detail(str(id))
         if not query:
             return {"error": "provide a query string (or id for one dataset's details)"}
-        sessions.touch_session(_sid(ctx))
         lim = max(1, min(int(limit or 15), 50))
         return search_ops.hybrid_search(str(query), kind, lim)
+    except sessions.AuthError as e:
+        return _auth_error(e)
     except Exception as e:
         return {"error": f"search failed: {str(e).strip()}"}
 
@@ -99,16 +170,15 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
     After ingesting, explore with the query tool and visualize via layer + map.
     """
     try:
-        sid = _sid(ctx)
-        sessions.touch_session(sid)
+        w = _ws(ctx)
         if op == "register":
-            return load_ops.register(sid, kind or "", url, title or "", slug, license, notes)
+            return load_ops.register(w.id, kind or "", url, title or "", slug, license, notes)
         if op == "ingest":
             if not dataset_id:
                 return {"error": "ingest needs dataset_id (find it with search)"}
-            return load_ops.ingest(sid, str(dataset_id), table_name, target)
+            return load_ops.ingest(w.id, str(dataset_id), table_name, target)
         if op == "inline":
-            return load_ops.inline(sid, rows or [], table_name or "", source, crs)
+            return load_ops.inline(w.id, rows or [], table_name or "", source, crs)
         if op == "status":
             if job_id is None:
                 return {"error": "status needs job_id"}
@@ -116,8 +186,10 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
         if op == "jobs":
             return load_ops.jobs()
         if op == "embed":
-            return load_ops.embed(sid)
+            return load_ops.embed(w.id)
         return {"error": "op must be one of register|ingest|inline|status|jobs|embed"}
+    except sessions.AuthError as e:
+        return _auth_error(e)
     except Exception as e:
         return {"error": f"load failed: {str(e).strip()}"}
 
@@ -132,8 +204,9 @@ def query(sql: str, limit: int = 500, ctx: Context = None) -> dict:
     (ST_Area, ST_Length, ST_X/ST_Y) rather than raw geometry when you can.
 
     Data model: shared reference layers in ref.* (geometry column 'geom', SRID 3014 —
-    SWEREF 99 17 15, units metres), your private tables in your ws_* schema, the catalog in
-    catalog.datasets / catalog.sources, document text in doc.documents / doc.chunks.
+    SWEREF 99 17 15, units metres), your private tables in your workspace schema (see
+    workspace(op='current')), the catalog in catalog.datasets / catalog.sources, document
+    text in doc.documents / doc.chunks.
 
     Examples:
       -- what is near a location? (metres, thanks to SRID 3014)
@@ -155,11 +228,65 @@ def query(sql: str, limit: int = 500, ctx: Context = None) -> dict:
     referenced_tables}. Writes are impossible here: derive new tables with the layer tool.
     """
     try:
-        sid = _sid(ctx)
-        sessions.touch_session(sid)
-        return query_ops.run_query(sid, sql, limit)
+        w = _ws(ctx)
+        return query_ops.run_query(w.id, sql, limit)
+    except sessions.AuthError as e:
+        return _auth_error(e)
     except Exception as e:
         return {"error": f"query failed: {str(e).strip()}"}
+
+
+@mcp.tool()
+def workspace(op: str = "current", name: str | None = None, new_name: str | None = None,
+              ctx: Context = None) -> dict:
+    """Manage your durable workspaces (named containers for layers and maps).
+
+    Workspaces belong to your API key and survive reconnects and restarts: coming back
+    tomorrow with the same key puts you in the same active workspace, tables intact.
+    Ops:
+
+    - op='current' {}: the active workspace and its layers (default when op omitted).
+    - op='list' {}: all your workspaces with layer/map counts and last-used times.
+    - op='new' {name}: create a workspace and switch to it (name: lowercase, digits,
+      '-'/'_', max 40 chars; e.g. 'flood-analysis'). If that name already exists you are
+      switched to it instead, with its layers intact — the reply's 'created' flag says which
+      happened. Max 20 workspaces per key.
+    - op='delete' also deletes that workspace's map views (their layers are going away).
+    - op='use' {name}: switch the active workspace — later layer/map/query calls run there.
+    - op='rename' {name, new_name}: relabel a workspace (tables untouched).
+    - op='delete' {name}: drop the workspace schema AND all its tables (irreversible;
+      recorded in provenance).
+
+    Use separate workspaces for separate analyses so layer names never collide and
+    old work stays browsable — the human-facing manager UI lives at /workspaces.
+    """
+    try:
+        w = _ws(ctx)
+        if op in ("current", ""):
+            return workspace_ops.current(w)
+        if op == "list":
+            return workspace_ops.list_workspaces(w.api_key_id)
+        if op == "new":
+            if not name:
+                return {"error": "new needs a name"}
+            return workspace_ops.create(w.api_key_id, name)
+        if op == "use":
+            if not name:
+                return {"error": "use needs a name — see op='list'"}
+            return workspace_ops.use(w.api_key_id, name)
+        if op == "rename":
+            if not name or not new_name:
+                return {"error": "rename needs name and new_name"}
+            return workspace_ops.rename(w.api_key_id, name, new_name)
+        if op == "delete":
+            if not name:
+                return {"error": "delete needs a name"}
+            return workspace_ops.delete(w.api_key_id, name)
+        return {"error": "op must be one of current|list|new|use|rename|delete"}
+    except sessions.AuthError as e:
+        return _auth_error(e)
+    except Exception as e:
+        return {"error": f"workspace failed: {str(e).strip()}"}
 
 
 @mcp.tool()
@@ -167,7 +294,7 @@ def layer(op: str, name: str | None = None, sql: str | None = None, notes: str =
           style: dict | None = None, key_column: str | None = None, values: dict | None = None,
           popup: list | None = None, label: str | None = None, visible: bool | None = None,
           new_name: str | None = None, ctx: Context = None) -> dict:
-    """Create and manage tables in your private workspace — the ONLY write path.
+    """Create and manage tables in your active workspace — the ONLY write path.
 
     Every op is recorded in the append-only provenance ledger. Ops:
 
@@ -186,35 +313,37 @@ def layer(op: str, name: str | None = None, sql: str | None = None, notes: str =
       (estimates), with their style metadata.
 
     Layer-then-map is how you show results to the user: create a layer from a SELECT,
-    then map(op='upsert', layers=[...]) and give the user the returned URL.
+    then map(op='upsert', layers=[...]) and give the user the returned URL. Layers live
+    in the active workspace (workspace tool to switch).
     """
     try:
-        sid = _sid(ctx)
-        sessions.touch_session(sid)
+        w = _ws(ctx)
         if op == "create":
             if not name or not sql:
                 return {"error": "create needs name and sql"}
-            return layer_ops.create(sid, name, sql, notes, style)
+            return layer_ops.create(w.id, name, sql, notes, style)
         if op == "update":
             if not name or not key_column or not values:
                 return {"error": "update needs name, key_column and values"}
-            return layer_ops.update(sid, name, key_column, values)
+            return layer_ops.update(w.id, name, key_column, values)
         if op == "style":
             if not name:
                 return {"error": "style needs name"}
-            return layer_ops.style(sid, name, style, popup, label, visible,
+            return layer_ops.style(w.id, name, style, popup, label, visible,
                                    notes if notes else None)
         if op == "rename":
             if not name or not new_name:
                 return {"error": "rename needs name and new_name"}
-            return layer_ops.rename(sid, name, new_name)
+            return layer_ops.rename(w.id, name, new_name)
         if op == "drop":
             if not name:
                 return {"error": "drop needs name"}
-            return layer_ops.drop(sid, name)
+            return layer_ops.drop(w.id, name)
         if op == "list":
-            return layer_ops.list_layers(sid)
+            return layer_ops.list_layers(w.id)
         return {"error": "op must be one of create|update|style|rename|drop|list"}
+    except sessions.AuthError as e:
+        return _auth_error(e)
     except Exception as e:
         return {"error": f"layer failed: {str(e).strip()}"}
 
@@ -233,24 +362,30 @@ def map(op: str = "upsert", view_id: str | None = None, title: str | None = None
       {view_id, url, version} — give the url to the user; open pages refresh themselves
       within seconds when you upsert the same view_id again.
     - op='get' {view_id}: the stored spec + version.
-    - op='list' {}: your session's views.
+    - op='list' {}: the active workspace's views.
 
-    basemap: 'positron' (default), 'osm', or 'none'. Typical flow: layer(op='create', ...)
-    with a styled result, then map(op='upsert', layers=[{'ref': 'ws_x.result',
+    basemap: 'positron' (default), 'osm', 'none', or 'wms:<dataset id>' for a catalog
+    raster layer. The page renders with MapLibre by default; '?renderer=origo' on the same
+    URL serves the Origo (OpenLayers) renderer. NOTE: Origo renders in EPSG:3014 and cannot
+    align Web-Mercator tiles, so positron/osm show no backdrop there — pick a
+    'wms:<dataset id>' basemap (search(kind='raster_ref')) if the map should have one in
+    both renderers. Typical flow: layer(op='create', ...) with a styled
+    result, then map(op='upsert', layers=[{'ref': 'ws_x.result',
     'style': {'fill': '#e31a1c', 'opacity': 0.5}, 'popup': ['name', 'area_m2']}]).
     """
     try:
-        sid = _sid(ctx)
-        sessions.touch_session(sid)
+        w = _ws(ctx)
         if op == "upsert":
-            return map_ops.upsert(sid, view_id, title, layers, basemap, extent_3014, legend)
+            return map_ops.upsert(w.id, view_id, title, layers, basemap, extent_3014, legend)
         if op == "get":
             if not view_id:
                 return {"error": "get needs view_id"}
             return map_ops.get(view_id)
         if op == "list":
-            return map_ops.list_views(sid)
+            return map_ops.list_views(w.id)
         return {"error": "op must be one of upsert|get|list"}
+    except sessions.AuthError as e:
+        return _auth_error(e)
     except Exception as e:
         return {"error": f"map failed: {str(e).strip()}"}
 
@@ -270,10 +405,24 @@ def export(layers: list, format: str = "gpkg", cite: bool = True, ctx: Context =
     Returns {url, sidecar_url, format, expires_hours}.
     """
     try:
-        return export_ops.run_export(_sid(ctx), layers, format, cite)
+        w = _ws(ctx)
+        return export_ops.run_export(w.id, layers, format, cite)
+    except sessions.AuthError as e:
+        return _auth_error(e)
     except Exception as e:
         return {"error": f"export failed: {str(e).strip()}"}
 
 
+def main() -> None:
+    if not config.GEODATA_API_KEYS:
+        print("FATAL: GEODATA_API_KEYS is empty — set at least one key in .env "
+              "(auth is not optional).", file=sys.stderr)
+        raise SystemExit(1)
+    sessions.bootstrap_env_keys(config.GEODATA_API_KEYS)
+    app = mcp.streamable_http_app()
+    app.add_middleware(BearerAuthMiddleware)
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+
+
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
+    main()

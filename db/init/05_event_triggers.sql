@@ -8,8 +8,8 @@ DECLARE r record;
 BEGIN
   FOR r IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
     IF r.schema_name IS NOT NULL AND (r.schema_name LIKE 'ws\_%' OR r.schema_name = 'ref') THEN
-      INSERT INTO app.provenance (session_id, kind, object_ref, sql_text, details)
-      VALUES (current_setting('app.session_id', true), 'ddl_event', r.object_identity,
+      INSERT INTO app.provenance (workspace_id, kind, object_ref, sql_text, details)
+      VALUES (current_setting('app.workspace_id', true), 'ddl_event', r.object_identity,
               current_query(),
               jsonb_build_object('command_tag', r.command_tag, 'object_type', r.object_type,
                                  'role', session_user));
@@ -23,8 +23,8 @@ DECLARE r record;
 BEGIN
   FOR r IN SELECT * FROM pg_event_trigger_dropped_objects() LOOP
     IF r.schema_name IS NOT NULL AND (r.schema_name LIKE 'ws\_%' OR r.schema_name = 'ref') THEN
-      INSERT INTO app.provenance (session_id, kind, object_ref, sql_text, details)
-      VALUES (current_setting('app.session_id', true), 'ddl_event', r.object_identity,
+      INSERT INTO app.provenance (workspace_id, kind, object_ref, sql_text, details)
+      VALUES (current_setting('app.workspace_id', true), 'ddl_event', r.object_identity,
               current_query(),
               jsonb_build_object('command_tag', 'DROP', 'object_type', r.object_type,
                                  'role', session_user));

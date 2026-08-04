@@ -9,15 +9,17 @@ The architectural core: loaders write only to PostGIS, map clients read only fro
 endpoints off PostGIS, and the MCP server is a control plane that never sits in the data path.
 
 ```
-loaders ──▶ PostGIS ──▶ /data /tiles endpoints ──▶ MapLibre page / Origo config / QGIS (GPKG)
+loaders ──▶ PostGIS ──▶ /data /tiles endpoints ──▶ MapLibre page / Origo page / QGIS (GPKG)
                ▲
-           MCP server (6 tools, streamable HTTP)
+           MCP server (7 tools, streamable HTTP, bearer auth)
 ```
 
 ## Quickstart
 
 ```sh
 cp .env.example .env                # then edit: every password there is a placeholder
+#   GEODATA_API_KEYS needs at least one key (`openssl rand -hex 24`); the mcp
+#   service refuses to start without it. Two keys let security_test.py run.
 docker compose up -d --build        # 6 containers: postgres, minio, mcp, worker, viewer, caddy
 uv venv && uv pip install "mcp>=1.9" httpx
 .venv/bin/python scripts/bootstrap_sundsvall.py   # register + harvest + ingest + embed (~10 min)
@@ -26,28 +28,65 @@ uv venv && uv pip install "mcp>=1.9" httpx
 .venv/bin/python scripts/validate_data.py         # ingested rows vs each source's own count
 ```
 
-- MCP endpoint (streamable HTTP): `http://localhost:8080/mcp` — add to Claude with
-  `claude mcp add --transport http geodata http://localhost:8080/mcp`
-- Map views: `http://localhost:8080/v/<view_id>` (capability URL; ETag-polling live updates)
+Upgrading an existing database (pre-auth installs) instead of starting clean:
+
+```sh
+docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/001_durable_workspaces.sql
+```
+
+- MCP endpoint (streamable HTTP): `http://localhost:8080/mcp` — **requires
+  `Authorization: Bearer <api key>`**. Add to Claude with
+  `claude mcp add --transport http geodata http://localhost:8080/mcp --header "Authorization: Bearer $KEY"`
+- Workspace manager (human UI): `http://localhost:8080/workspaces` — sign in with the same key
+- Map views: `http://localhost:8080/v/<view_id>` (capability URL; ETag-polling live updates).
+  Add `?renderer=origo` for the Origo/OpenLayers renderer; each page links to the other.
 - Postgres: `localhost:5433` (`postgres` / `geodata_dev`), MinIO console: `localhost:9001`
 
-## The six tools
+## The seven tools
 
 | tool | what it does |
 |------|--------------|
+| `workspace` | list/create/switch/rename/delete the API key's durable workspaces; the active one receives every layer/map write |
 | `search` | hybrid trigram + EmbeddingGemma vector search over the catalog (2 100+ datasets) and document chunks; `id=` returns full schema + provenance |
 | `load` | register sources (WFS/WMS/file/PDF/inline), harvest capabilities into the catalog, ingest datasets into `ref`/workspace via job queue; `op='embed'` refreshes embeddings |
 | `query` | read-only SQL as `agent_ro` (PostGIS 3.5 + pgvector, 15 s timeout, 1 000-row cap); every call logged with a `query_id` and server-extracted referenced tables |
-| `layer` | the only write path: CTAS into the session workspace, per-row updates, style/notes; every op appends to the append-only `app.provenance` ledger |
-| `map` | upsert a renderer-agnostic map view; returns a capability URL; open pages pick up changes in ≤ 5 s via ETag polling |
+| `layer` | the only write path: CTAS into the active workspace, per-row updates, style/notes; every op appends to the append-only `app.provenance` ledger |
+| `map` | upsert a renderer-agnostic map view; returns a capability URL rendered by MapLibre or Origo; open MapLibre pages pick up changes in ≤ 5 s via ETag polling |
 | `export` | GPKG/GeoJSON/CSV/Parquet via ogr2ogr → MinIO presigned URL, with a citation sidecar generated from the provenance ledger |
+
+## Identity, auth and durable workspaces
+
+Identity is an **API key**, not a connection. Every `/mcp` request must carry
+`Authorization: Bearer <key>`; anything else gets a 401 before it reaches a tool
+(`/healthz` stays open). Keys come from `GEODATA_API_KEYS` in `.env` and are stored only as
+SHA-256 digests in `app.api_keys`, so a leaked row is not a replayable credential.
+
+A key owns any number of named **workspaces** (`app.workspaces`, max 20/key), exactly one of
+which is *active* and receives every `layer`/`map`/`load(op='inline')` write. Because the key
+— not the per-connection `mcp-session-id` — is the identity, reconnecting tomorrow lands in
+the same workspace with its tables intact. This is what closes v1's "workspaces are not
+durable across reconnects" gap, and it is why the `checkpoint` tool could stay retired.
+
+Two ways to manage them:
+
+- Agents: `workspace(op='list'|'new'|'use'|'rename'|'delete'|'current')`.
+- Humans: `http://localhost:8080/workspaces`, signing in with the same API key (the server
+  sets a signed, HttpOnly cookie holding only the key's id; `VIEWER_SECRET` signs it). The
+  page lists each workspace's layer count, maps and last use, and can activate, rename or
+  delete one — switching there redirects the agent's next tool call, no reconnect needed.
+
+Workspace schemas (`ws_<8 hex>`) are created lazily on first write and deleted only when you
+delete the workspace. There is no idle TTL any more: an hourly worker sweep drops only
+*orphaned* `ws_*` schemas — ones no `app.workspaces` row owns.
 
 ## Provenance model (the auditing story)
 
 - Reads: `app.query_log` records every `query` call (SQL, referenced tables from the
-  planner, session, duration) and returns its `query_id` to the agent.
+  planner, workspace, duration) and returns its `query_id` to the agent.
 - Writes: only `layer`/`load` create state; each appends `app.provenance` (SQL text, input
-  tables extracted from EXPLAIN — never self-reported, session, job id).
+  tables extracted from EXPLAIN — never self-reported, workspace, job id).
+  Attribution is the workspace uuid (`workspace_id`), set as `app.workspace_id` inside the
+  writing transaction so the event triggers see it too.
 - Backstop: `ddl_command_end`/`sql_drop` event triggers record ANY DDL touching `ws_*`/`ref`
   schemas, whatever code path caused it. pgAudit logs the complete statement stream beneath.
 - `export` bundles a human-readable citation sidecar walking the lineage chain to sources
@@ -60,20 +99,38 @@ Enforced today, with regression tests in `scripts/security_test.py`:
 - `query` cannot write. It runs as `agent_ro` with `SET TRANSACTION READ ONLY` re-asserted
   per transaction, plus a statement-kind guard, 15 s timeout and row cap. Pooled connections
   are scrubbed on release so no statement can leave session state behind for the next caller.
-- `agent_ws` may only CREATE inside the calling session's `ws_<hash>` schema.
-- The MCP session id never reaches the database: only its SHA-256 digest is stored, so a
-  leaked `app.provenance`/`app.jobs` row is not a usable credential. `app.sessions` is not
-  readable by the agent roles at all (grants in `app` are per table, never schema-wide).
-- A session cannot overwrite or read the owner of another session's **map view**, and
-  `map(op='get')` never returns a session identifier — map URLs are shareable by design.
+- `/mcp` rejects requests without a known, enabled API key (401 + `WWW-Authenticate`).
+- `agent_ws` may only CREATE inside the calling key's active `ws_<8 hex>` schema.
+- API keys never reach the database in the clear: only SHA-256 digests are stored.
+  `app.api_keys` and `app.workspaces` are not readable by the agent roles at all (grants in
+  `app` are per table, never schema-wide), so one principal cannot enumerate another's keys
+  or workspaces.
+- A principal cannot overwrite another's **map view**, and `map(op='get')` never returns an
+  owner identifier — map URLs are shareable by design.
+- The workspace manager UI checks ownership on every action and requires a per-principal
+  CSRF token; a workspace id belonging to another key is simply "unknown workspace".
+- Every HTML page carries a CSP without `'unsafe-inline'` (own scripts run via a
+  per-response nonce), so injected markup and inline handlers cannot execute. This is
+  load-bearing rather than decorative: Origo renders layer titles through
+  `createContextualFragment` and feature-info values through `innerHTML`, and feature
+  values are substituted client-side, so escaping alone cannot reach them — while the map
+  pages share an origin with the cookie-authed manager. Agent-supplied labels and popup
+  attribute names are additionally escaped when the Origo config is compiled. The MapLibre
+  page is the one exception granted `'unsafe-eval'`, which its worker needs to compile
+  style expressions; it escapes all attacker-reachable text itself.
 - Ingest refuses to overwrite a `ref` table already claimed by a different dataset.
 
 **Not** guaranteed, by design — say so before a municipal deployment:
 
-- **Workspaces are namespacing, not tenancy.** All agent SQL runs as one shared read-only
-  role, so any session can *read* any workspace or `ref` table through `query`. Writes are
-  session-scoped; reads are not. Per-user isolation means real auth plus either RLS or a
-  role per user (§11 of the architecture keeps RLS as the documented fallback).
+- **Workspaces are namespacing, not tenancy.** All agent SQL still runs as one shared
+  read-only role, so any *authenticated* principal can `query` any workspace or `ref` table.
+  Writes are workspace-scoped; reads are not. Authentication now gates who gets in at all,
+  but read isolation between principals additionally needs RLS or a role per user (§11 of
+  the architecture keeps RLS as the documented fallback).
+- **API keys are static and shared-secret.** No expiry, rotation is editing `.env` and
+  restarting (or `UPDATE app.api_keys SET disabled = true`); the middleware caches valid
+  digests for 30 s, so disabling a key takes effect within that window. No OAuth, no
+  per-user accounts — this is a perimeter gate plus durable identity, not an IdP.
 - **Map views are capability URLs.** Knowing the link is the permission (§5.2). Real
   authentication is a later addition at the Caddy chokepoint.
 - All credentials come from `.env` (gitignored; `.env.example` is the committed template with
@@ -82,8 +139,40 @@ Enforced today, with regression tests in `scripts/security_test.py`:
 - MinIO is exposed directly on `:9000` rather than through Caddy, because the public endpoint
   is part of the presigned-URL signature. Put it behind TLS before any non-local use.
 
-Session identity comes from the MCP `mcp-session-id` header, which the transport rejects if
-unknown; workspaces are created lazily and survive reconnects.
+The transport still issues an `mcp-session-id` and rejects unknown ones, but it carries no
+identity any more — it is only the streamable-HTTP connection handle.
+
+## Two renderers: MapLibre and Origo
+
+Every map view is renderer-agnostic and served by both, from the same `app.map_views` spec:
+
+| | MapLibre (`/v/<id>`) | Origo (`/v/<id>?renderer=origo`) |
+|---|---|---|
+| engine | MapLibre GL JS 4.7.1 (WebGL) | Origo 2.10 / OpenLayers 10 (canvas) |
+| projection | EPSG:3857 (data reprojected to 4326) | **EPSG:3014 natively** — data served in its own CRS |
+| large layers | MVT vector tiles above 20 000 features | GeoJSON only |
+| live updates | ETag polling, `setStyle({diff:true})` in ≤ 5 s | polls the config, offers a "Map updated — reload" button |
+| basemaps | positron / osm / WMS | **WMS only** (see below) |
+| extras | — | legend with layer toggles, background switcher, feature-info popups, scale bar |
+
+Both bundles are vendored into the viewer image at build time; nothing is fetched from a CDN
+at runtime. Each page links to the other, so switching renderer is one click.
+
+**Why Origo has no positron/osm backdrop.** Origo forces every tile source to the map's own
+projection (`source.projection = getProjectionCode()` in its layer factory), so a Web-Mercator
+XYZ service asked for in an EPSG:3014 map would request 3857 tile addresses against a SWEREF
+grid and silently render nothing. Rather than emit a layer that is guaranteed blank, the
+compiler omits it and the page shows a note explaining the choice. WMS works natively — the
+server reprojects — which is exactly why Sundsvall's own Origo cascades all its rasters
+(Lantmäteriet topowebbkartan, ortofoto) as WMS in EPSG:3014. For a backdrop in Origo, use
+`map(basemap='wms:<dataset id>')` with one of the 1 203 catalogued WMS layers, e.g.
+`SundsvallsKommun:Kartbakgrund_yta`.
+
+The generated config follows the conventions of Sundsvall's production `index.json`:
+`proj4Defs` for 3014 + 3006 with `urn:ogc:def:crs` aliases, a metre resolution ladder,
+overlays first with background layers last (Origo draws the array top-down), named styles as
+array-of-arrays, and a thumbnail style on background layers — without one, Origo's legend
+control throws and disappears.
 
 ## Data scope — read this before trusting a count
 
@@ -144,12 +233,11 @@ Verified against the architecture doc by an audit of all 60 requirements (32 don
 4 missing, 5 deferred by decision). The gaps that matter, roughly in priority order:
 
 **Blocks multi-user use**
-- *Workspaces are not durable across reconnects.* The architecture claims they are (§3.1, and
-  it is the whole justification for retiring `checkpoint`). In practice the workspace key is
-  derived from the MCP session id, which clients mint fresh on every connect — so a
-  reconnecting agent gets an empty workspace and can no longer mutate its earlier layers.
-  Fixing this needs a stable client identity or an explicit "adopt this workspace" op; it is a
-  design decision, not a patch.
+- *Read isolation between principals.* Auth now gates the door and writes are workspace-scoped,
+  but every authenticated principal shares the `agent_ro` role and can therefore `query` any
+  other principal's workspace tables. Real tenancy needs RLS or a database role per key.
+- *API-key management is manual.* Keys live in `.env`, have no expiry or rotation flow, and
+  new principals mean editing the file and restarting the mcp service.
 - *The MCP server is the one stateful service.* FastMCP's stateful streamable-HTTP mode keeps
   transports in process memory, so a session pinned to replica A is unknown to replica B.
   Everything else is genuinely stateless. Horizontal scaling needs sticky sessions or the
@@ -170,13 +258,16 @@ Verified against the architecture doc by an audit of all 60 requirements (32 don
   columns and no type inference.
 - No successor to v1's `edit_field` add/drop/classify: adding a computed column means
   recreating the layer through `layer(op='create')`.
-- The Origo config has never been loaded by a real Origo build, so its conformance is untested.
 - The document half of search has no corpus: both pilot PDFs are scans, so `doc.chunks` is
   empty and the chunk arms are unexercised. Needs a text-layer PDF (or the deferred OCR model).
 
 **Housekeeping**
 - Exports accumulate in MinIO forever — the presigned URL expires at 24 h, the object doesn't.
   Needs a lifecycle rule.
+- Workspaces have no size cap and no idle expiry (only the 20-per-key count limit), so a busy
+  key can grow schemas indefinitely; deletion is explicit, via the tool or the manager UI.
+- The Origo page cannot hot-apply a changed view the way MapLibre does — OpenLayers has no
+  style-diff equivalent — so it surfaces a reload button instead of rebooting under the user.
 
 ## Deferred by decision (documented upgrade paths)
 
@@ -184,9 +275,9 @@ Verified against the architecture doc by an audit of all 60 requirements (32 don
   the v1 seam; compilers repoint when the swap happens (§5.3).
 - **pgSTAC + orthophoto change detection** — additive milestone (§7); WMS ortofoto reference
   layers already flow through map specs today.
-- **Origo interactive page** — v1 ships the compiler (`/v/<id>/origo.json`, EPSG:3014 config
-  with proj4 def + GeoJSON/WMS layers); pointing an Origo deployment at it is config-level.
-- **Auth** — capability URLs now; signed tokens at the Caddy chokepoint later (§5.2).
+- **Auth beyond a bearer key** — static API keys gate `/mcp` and the manager UI today; OAuth,
+  per-user accounts or signed tokens at the Caddy chokepoint remain later work (§5.2). Map
+  view URLs stay capability links by design.
 - **PgBouncer / K8s** — single-host compose now; all services stateless, state only in
   Postgres + MinIO (§9).
 
@@ -197,9 +288,10 @@ CONTRACTS.md               implementation contract (binding)
 geodata-mcp-architecture.md  target architecture (background)
 docker-compose.yml         the whole system, one command
 db/                        Postgres 17 image (PGDG postgis/pgvector/pgaudit) + init SQL
-services/mcp/              FastMCP server — 6 tools
+services/mcp/              FastMCP server — 7 tools, bearer auth
 services/worker/           job runner: WFS/WMS harvest, ogr2ogr ingest, PDF, embeddings, export
-services/viewer/           map pages + style compilers + /data + /tiles endpoints
+services/viewer/           map pages (MapLibre + Origo), workspace manager UI, /data + /tiles
+db/migrations/             idempotent upgrade SQL for existing databases
 deploy/Caddyfile           one-origin reverse proxy
 scripts/                   bootstrap_sundsvall.py, e2e_test.py, security_test.py, mcp_client.py
 ```

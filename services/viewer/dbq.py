@@ -62,11 +62,11 @@ def split_layer_ref(ref):
 
 def get_view(conn, view_id):
     row = conn.execute(
-        "SELECT view_id, session_id, title, spec, version "
+        "SELECT view_id, workspace_id, title, spec, version "
         "FROM app.map_views WHERE view_id = %s", (view_id,)).fetchone()
     if row is None:
         return None
-    return {"view_id": row[0], "session_id": row[1], "title": row[2],
+    return {"view_id": row[0], "workspace_id": row[1], "title": row[2],
             "spec": row[3] or {}, "version": row[4]}
 
 
@@ -183,6 +183,18 @@ def wms_dataset(conn, dataset_id):
     return {"external_id": row[0], "title": row[1], "url": row[2], "attribution": row[3] or ""}
 
 
+def wms_dataset_by_external_id(conn, external_id):
+    """Like wms_dataset, but keyed by WMS layer name (oldest catalog row wins)."""
+    row = conn.execute(
+        "SELECT d.external_id, d.title, s.url, s.attribution "
+        "FROM catalog.datasets d JOIN catalog.sources s ON s.id = d.source_id "
+        "WHERE d.external_id = %s AND d.kind = 'raster_ref' AND s.kind = 'wms' "
+        "ORDER BY d.created_at LIMIT 1", (str(external_id),)).fetchone()
+    if row is None:
+        return None
+    return {"external_id": row[0], "title": row[1], "url": row[2], "attribution": row[3] or ""}
+
+
 def layer_extent_3014(conn, schema, table):
     """[xmin, ymin, xmax, ymax] of the layer in EPSG:3014, or None when empty."""
     q = sql.SQL(
@@ -252,6 +264,126 @@ def geojson_feature_collection(conn, schema, table, props, crs, limit, simplify)
         g=sql.Identifier("geom"), lim=sql.Placeholder())
     row = conn.execute(query, (limit,)).fetchone()
     return row[0]
+
+
+# ── workspace manager UI ─────────────────────────────────────────────────────
+
+WORKSPACE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+
+
+def api_key_id_for_hash(conn, key_hash):
+    """api_keys.id for an enabled key digest (used by the login form)."""
+    row = conn.execute(
+        "SELECT id::text FROM app.api_keys WHERE key_hash = %s AND NOT disabled",
+        (key_hash,)).fetchone()
+    return row[0] if row else None
+
+
+def api_key_valid(conn, api_key_id):
+    try:
+        u = uuid.UUID(str(api_key_id))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM app.api_keys WHERE id = %s AND NOT disabled", (str(u),)).fetchone()
+    return row is not None
+
+
+def workspaces_for_key(conn, api_key_id):
+    """Workspace rows for a key, newest-used first, with layer and map counts."""
+    rows = conn.execute(
+        """SELECT w.id::text, w.name, w.ws_schema, w.is_active,
+                  to_char(w.created_at, 'YYYY-MM-DD HH24:MI') AS created_at,
+                  to_char(w.last_used,  'YYYY-MM-DD HH24:MI') AS last_used
+             FROM app.workspaces w
+            WHERE w.api_key_id = %s
+            ORDER BY w.last_used DESC""",
+        (api_key_id,)).fetchall()
+    out = []
+    schemas = [r[2] for r in rows]
+    counts = {}
+    if schemas:
+        for s, n in conn.execute(
+            """SELECT n.nspname, count(*) FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relkind = 'r' AND n.nspname = ANY(%s)
+                GROUP BY n.nspname""", (schemas,)).fetchall():
+            counts[s] = int(n)
+    for r in rows:
+        maps = conn.execute(
+            """SELECT view_id, title, to_char(updated_at, 'YYYY-MM-DD HH24:MI')
+                 FROM app.map_views WHERE workspace_id = %s
+                ORDER BY updated_at DESC LIMIT 20""",
+            (r[0],)).fetchall()
+        out.append({"id": r[0], "name": r[1], "ws_schema": r[2], "is_active": bool(r[3]),
+                    "created_at": r[4], "last_used": r[5],
+                    "layer_count": counts.get(r[2], 0),
+                    "maps": [{"view_id": m[0], "title": m[1] or "(untitled)",
+                              "updated_at": m[2]} for m in maps]})
+    return out
+
+
+def workspace_owned(conn, api_key_id, workspace_id):
+    """Workspace row (id, name, ws_schema, is_active) iff owned by this key."""
+    try:
+        u = uuid.UUID(str(workspace_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return conn.execute(
+        """SELECT id::text, name, ws_schema, is_active FROM app.workspaces
+            WHERE id = %s AND api_key_id = %s""",
+        (str(u), api_key_id)).fetchone()
+
+
+def _lock_key(conn, api_key_id):
+    """Same per-key advisory lock the MCP server takes (services/mcp/sessions.py), so
+    manager-UI actions serialize against concurrent agent calls on the same key."""
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (api_key_id,))
+
+
+def activate_workspace(conn, api_key_id, workspace_id):
+    with conn.transaction():
+        _lock_key(conn, api_key_id)
+        conn.execute(
+            "UPDATE app.workspaces SET is_active = false WHERE api_key_id = %s AND is_active",
+            (api_key_id,))
+        conn.execute(
+            "UPDATE app.workspaces SET is_active = true, last_used = now() WHERE id = %s",
+            (workspace_id,))
+
+
+def rename_workspace(conn, api_key_id, workspace_id, new_name):
+    """Returns an error string or None."""
+    if not WORKSPACE_NAME_RE.match(new_name or ""):
+        return "name must match ^[a-z0-9][a-z0-9_-]{0,39}$"
+    clash = conn.execute(
+        "SELECT 1 FROM app.workspaces WHERE api_key_id = %s AND name = %s AND id <> %s",
+        (api_key_id, new_name, workspace_id)).fetchone()
+    if clash:
+        return f"a workspace named {new_name!r} already exists"
+    conn.execute("UPDATE app.workspaces SET name = %s WHERE id = %s",
+                 (new_name, workspace_id))
+    return None
+
+
+def delete_workspace(conn, api_key_id, workspace_id, ws_schema):
+    """Drop schema + bookkeeping in one transaction; the sql_drop event trigger
+    records the deletion in provenance (attributed via app.workspace_id).
+
+    Deletes the workspace's map views too — same reasoning as the MCP workspace tool:
+    their layers are going away, so the capability URLs would serve empty, permanently
+    un-updatable maps.
+    """
+    if not WS_SCHEMA_RE.match(ws_schema):
+        raise ValueError(f"suspicious schema name {ws_schema!r}")
+    with conn.transaction():
+        _lock_key(conn, api_key_id)
+        conn.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id,))
+        conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
+            sql.Identifier(ws_schema)))
+        conn.execute("DELETE FROM app.layer_meta WHERE schema_name = %s", (ws_schema,))
+        conn.execute("DELETE FROM app.map_views WHERE workspace_id = %s", (workspace_id,))
+        conn.execute("DELETE FROM app.workspaces WHERE id = %s", (workspace_id,))
 
 
 def mvt_tile(conn, schema, table, props, z, x, y):
