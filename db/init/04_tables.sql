@@ -98,8 +98,11 @@ CREATE UNIQUE INDEX workspaces_one_active_idx ON app.workspaces (api_key_id) WHE
 
 CREATE TABLE app.jobs (
   id          bigserial PRIMARY KEY,
-  kind        text NOT NULL CHECK (kind IN ('harvest_wfs','harvest_wms','ingest_wfs',
-                                            'ingest_file','ingest_pdf','embed_catalog','export')),
+  kind        text NOT NULL CHECK (kind IN ('harvest_wfs','harvest_wms','harvest_wmts',
+                                            'harvest_ogcapi','harvest_stac',
+                                            'ingest_wfs','ingest_ogcapi','ingest_file',
+                                            'ingest_pdf','ingest_text',
+                                            'embed_catalog','export')),
   payload     jsonb NOT NULL DEFAULT '{}'::jsonb,
   status      text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error')),
   result      jsonb,

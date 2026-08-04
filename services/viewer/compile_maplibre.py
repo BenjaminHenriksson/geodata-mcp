@@ -27,6 +27,42 @@ def wms_tile_url(base_url, external_id):
             + "&WIDTH=256&HEIGHT=256&BBOX={bbox-epsg-3857}")
 
 
+_WEB_MERCATOR_HINTS = ("3857", "900913")
+
+
+def wmts_tile_url(ds):
+    """GetTile KVP template for a WMTS raster_ref, or None when the layer has no
+    Web-Mercator matrix set MapLibre could address (raster sources always tile on
+    the standard 3857 grid). Matrix identifiers must be plain zoom integers or
+    '<set>:<zoom>' (the GeoServer GWC convention) for '{z}' substitution to hold.
+    """
+    meta = (ds.get("schema_summary") or {}).get("wmts") or {}
+    for set_name, info in (meta.get("matrix_sets") or {}).items():
+        crs = str((info or {}).get("crs") or "")
+        if not (set_name == "WebMercatorQuad"
+                or any(h in crs or h in set_name for h in _WEB_MERCATOR_HINTS)):
+            continue
+        ids = [str(m) for m in (info or {}).get("matrix_ids") or []]
+        if ids and all(m.isdigit() for m in ids):
+            tile_matrix = "{z}"
+        elif ids and all(m == f"{set_name}:{n}" for n, m in enumerate(ids)):
+            tile_matrix = f"{set_name}:{{z}}"
+        else:
+            continue
+        formats = meta.get("formats") or []
+        fmt = "image/png" if "image/png" in formats else (formats[0] if formats else "image/png")
+        sep = "&" if "?" in ds["url"] else "?"
+        return (ds["url"] + sep
+                + "SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"
+                + "&LAYER=" + quote(ds["external_id"] or "", safe="")
+                + "&STYLE=" + quote(meta.get("default_style") or "", safe="")
+                + "&TILEMATRIXSET=" + quote(set_name, safe=":")
+                + "&TILEMATRIX=" + tile_matrix
+                + "&TILEROW={y}&TILECOL={x}"
+                + "&FORMAT=" + quote(fmt, safe=""))
+    return None
+
+
 def _num(value, default):
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return value
@@ -70,9 +106,15 @@ def compile_style(conn, view):
             ds = dbq.wms_dataset(conn, ref[4:])
             if ds is None or not ds["url"]:
                 continue
+            if ds.get("source_kind") == "wmts":
+                tiles = wmts_tile_url(ds)
+                if not tiles:
+                    continue  # no Web-Mercator matrix set — nothing MapLibre can address
+            else:
+                tiles = wms_tile_url(ds["url"], ds["external_id"])
             sid = f"wms_{i}"
             sources[sid] = {"type": "raster",
-                            "tiles": [wms_tile_url(ds["url"], ds["external_id"])],
+                            "tiles": [tiles],
                             "tileSize": 256,
                             "attribution": ds["attribution"]}
             layer = {"id": sid, "type": "raster", "source": sid}

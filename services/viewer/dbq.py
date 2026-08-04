@@ -175,12 +175,14 @@ def wms_dataset(conn, dataset_id):
     except (ValueError, AttributeError, TypeError):
         return None
     row = conn.execute(
-        "SELECT d.external_id, d.title, s.url, s.attribution "
+        "SELECT d.external_id, d.title, s.url, s.attribution, s.kind, d.schema_summary "
         "FROM catalog.datasets d JOIN catalog.sources s ON s.id = d.source_id "
         "WHERE d.id = %s AND d.kind = 'raster_ref'", (str(u),)).fetchone()
     if row is None:
         return None
-    return {"external_id": row[0], "title": row[1], "url": row[2], "attribution": row[3] or ""}
+    return {"external_id": row[0], "title": row[1], "url": row[2],
+            "attribution": row[3] or "", "source_kind": row[4],
+            "schema_summary": row[5] or {}}
 
 
 def wms_dataset_by_external_id(conn, external_id):

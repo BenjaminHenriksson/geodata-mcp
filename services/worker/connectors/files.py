@@ -14,6 +14,7 @@ from psycopg import sql
 from psycopg.types.json import Json
 
 import dbutil
+import netauth
 
 log = logging.getLogger("worker.files")
 
@@ -28,11 +29,14 @@ class OgrError(RuntimeError):
     pass
 
 
-def run_ogr2ogr(args, timeout=OGR_TIMEOUT_S):
-    """Run ogr2ogr (list argv), capture output, raise OgrError on failure."""
+def run_ogr2ogr(args, timeout=OGR_TIMEOUT_S, env_extra=None):
+    """Run ogr2ogr (list argv), capture output, raise OgrError on failure.
+    env_extra augments the environment (e.g. GDAL_HTTP_USERPWD for
+    authenticated sources) without leaking into the worker process."""
     log.info("ogr2ogr: %s", dbutil.redact(" ".join(args)))
+    env = {**os.environ, **env_extra} if env_extra else None
     try:
-        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"ogr2ogr timed out after {timeout} s") from exc
     if proc.returncode != 0:
@@ -41,19 +45,20 @@ def run_ogr2ogr(args, timeout=OGR_TIMEOUT_S):
     return proc
 
 
-def run_ogr2ogr_with_retry(args, timeout=OGR_TIMEOUT_S):
+def run_ogr2ogr_with_retry(args, timeout=OGR_TIMEOUT_S, env_extra=None):
     """On ogr2ogr failure, retry once with -skipfailures appended."""
     try:
-        run_ogr2ogr(args, timeout=timeout)
+        run_ogr2ogr(args, timeout=timeout, env_extra=env_extra)
     except OgrError as exc:
         log.warning("ogr2ogr failed, retrying with -skipfailures: %s", exc)
-        run_ogr2ogr(list(args) + ["-skipfailures"], timeout=timeout)
+        run_ogr2ogr(list(args) + ["-skipfailures"], timeout=timeout, env_extra=env_extra)
 
 
 def download(url: str, dest: str, max_bytes: int, timeout: float = 60.0) -> int:
     """Stream url to dest with a byte cap; returns bytes written."""
     total = 0
-    with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as resp:
+    with httpx.stream("GET", url, timeout=timeout, follow_redirects=True,
+                      auth=netauth.basic_auth_for(url)) as resp:
         resp.raise_for_status()
         with open(dest, "wb") as fh:
             for chunk in resp.iter_bytes(65536):
@@ -223,6 +228,13 @@ def finalize_load(conn, job, schema: str, table: str, dataset_id=None, details=N
     out = {"table": f"{schema}.{table}", "feature_count": feature_count}
     if repaired:
         out["geometries_repaired"] = repaired
+    if not feature_count:
+        # A load that yields nothing usually means the upstream layer is empty or
+        # broken server-side (ogr2ogr's -skipfailures retry masks such faults) —
+        # say so instead of presenting an empty table as a clean result.
+        out["warning"] = ("0 features ingested — the source layer is empty or its "
+                          "server-side data is faulty; verify with a direct GetFeature "
+                          "against the source")
     return out
 
 

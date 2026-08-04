@@ -148,13 +148,16 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
     """Register data sources and bring datasets into the database. Ops:
 
     - op='register' {kind, url, title, slug?, license?, notes?}: add a source to the catalog.
-      kind: wfs|wms|wmts|ogcapi|file|pdf|text|stac|inline. WFS/WMS sources are harvested
-      automatically (a background job reads GetCapabilities and fills catalog.datasets —
-      poll it via the returned job_id). Returns {source_id, slug, job_id}.
+      kind: wfs|wms|wmts|ogcapi|file|pdf|text|stac|inline. WFS/WMS/WMTS/OGC-API/STAC sources
+      are harvested automatically (a background job reads the capabilities/collections and
+      fills catalog.datasets — poll it via the returned job_id). Returns {source_id, slug,
+      job_id}. WMTS/STAC layers become raster_ref datasets: reference them on maps via
+      'wms:<dataset id>' (WMTS renders in the MapLibre view), they are not ingestable.
     - op='ingest' {dataset_id, table_name?, target='ref'|'workspace'}: load a catalog dataset
-      into PostGIS (vector via WFS/file → a table with geom SRID 3014; documents → extracted
-      text chunks in doc.*). target='workspace' puts the table in your private schema.
-      Waits up to 8 s, then returns the job status either way; poll with op='status'.
+      into PostGIS (vector via WFS/OGC-API/file → a table with geom SRID 3014; pdf/text
+      documents → extracted text chunks in doc.*). target='workspace' puts the table in your
+      private schema. Waits up to 8 s, then returns the job status either way; poll with
+      op='status'.
     - op='inline' {rows, table_name, source, crs?}: synchronously insert rows you provide.
       rows = list of flat dicts; an optional 'wkt' key becomes the geometry (assumed
       EPSG:3014 unless crs='4326'), or 'lon'/'lat' keys (always WGS84). source is
@@ -164,8 +167,9 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
     - op='jobs' {}: the last 20 jobs.
     - op='embed' {}: (re)embed catalog + document chunks for semantic search (idempotent).
 
-    Registering a pdf/file source also creates its dataset immediately and returns
-    dataset_id — pass that straight to op='ingest'.
+    Registering a pdf/file/text source also creates its dataset immediately and returns
+    dataset_id — pass that straight to op='ingest' (text = a web page or plain-text URL,
+    ingested into the searchable document corpus).
 
     After ingesting, explore with the query tool and visualize via layer + map.
     """

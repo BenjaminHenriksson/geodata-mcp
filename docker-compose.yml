@@ -78,7 +78,12 @@ services:
   worker:
     restart: unless-stopped
     build: ./services/worker
-    environment: *appenv
+    environment:
+      <<: *appenv
+      # Basic-auth for authenticated sources (data_sources.xlsx): one var for
+      # every *.lantmateriet.se service, per-host entries for anything else.
+      LANTMATERIET_CREDENTIALS: ${LANTMATERIET_CREDENTIALS:-}
+      GEODATA_HTTP_CREDENTIALS: ${GEODATA_HTTP_CREDENTIALS:-}
     depends_on:
       postgres:
         condition: service_healthy

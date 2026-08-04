@@ -14,7 +14,7 @@ from psycopg.types.json import Json
 import dbutil
 import embedder
 import exporter
-from connectors import files, pdf, wfs
+from connectors import files, ogcapi, pdf, stac, textdoc, wfs, wmts
 
 log = logging.getLogger("worker.jobs")
 
@@ -27,9 +27,14 @@ MAX_ATTEMPTS = 2
 HANDLERS = {
     "harvest_wfs": wfs.harvest_wfs,
     "harvest_wms": wfs.harvest_wms,
+    "harvest_wmts": wmts.harvest_wmts,
+    "harvest_ogcapi": ogcapi.harvest_ogcapi,
+    "harvest_stac": stac.harvest_stac,
     "ingest_wfs": wfs.ingest_wfs,
+    "ingest_ogcapi": ogcapi.ingest_ogcapi,
     "ingest_file": files.ingest_file,
     "ingest_pdf": pdf.ingest_pdf,
+    "ingest_text": textdoc.ingest_text,
     "embed_catalog": embedder.embed_catalog,
     "export": exporter.export,
 }

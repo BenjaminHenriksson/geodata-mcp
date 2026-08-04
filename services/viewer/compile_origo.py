@@ -173,6 +173,7 @@ def compile_origo(conn, view):
                 f"in the catalog; harvest it or point ORIGO_WMS_BACKDROP at another layer.")
 
     vec_index = 0
+    wmts_skipped = []
     for entry in spec.get("layers") or []:
         if not isinstance(entry, dict):
             continue
@@ -183,6 +184,13 @@ def compile_origo(conn, view):
         if ref.startswith("wms:"):
             ds = dbq.wms_dataset(conn, ref[4:])
             if ds is None or not ds["url"]:
+                continue
+            if ds.get("source_kind") == "wmts":
+                # Origo builds WMTS tile grids from the map's own resolution ladder
+                # by index, and municipal caches (Sundsvall's GWC included) use a
+                # different ladder — the tiles cannot align here. The layer still
+                # renders in the MapLibre view; its WMS twin renders in both.
+                wmts_skipped.append(entry.get("label") or ds["title"])
                 continue
             add_wms_layer(ds, entry.get("label") or ds["title"],
                           entry.get("visible") is not False, "root")
@@ -268,6 +276,11 @@ def compile_origo(conn, view):
     config["geodata"] = {"view_id": view_id, "version": view["version"],
                          "revision": f"{view['version']}-{dbq.layer_meta_fingerprint(conn, spec)}",
                          "title": spec.get("title") or view.get("title") or ""}
+    if wmts_skipped:
+        skip_note = ("WMTS layer(s) not shown here — their tile grid does not match this "
+                     "map's resolution ladder: " + ", ".join(_text(t) for t in wmts_skipped)
+                     + ". They render in the MapLibre view.")
+        note = f"{note} {skip_note}" if note else skip_note
     if note:
         config["geodata"]["note"] = note
     return config

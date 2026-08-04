@@ -13,7 +13,8 @@ import sessions
 import sqlguard
 
 SOURCE_KINDS = ("wfs", "wms", "wmts", "ogcapi", "file", "pdf", "text", "stac", "inline")
-HARVEST_JOB = {"wfs": "harvest_wfs", "wms": "harvest_wms"}
+HARVEST_JOB = {"wfs": "harvest_wfs", "wms": "harvest_wms", "wmts": "harvest_wmts",
+               "ogcapi": "harvest_ogcapi", "stac": "harvest_stac"}
 
 
 def slugify(text: str, max_len: int = 55) -> str:
@@ -41,7 +42,7 @@ def register(workspace_id: str, kind: str, url: str | None, title: str,
         return {"error": f"kind must be one of {', '.join(SOURCE_KINDS)}"}
     if not title:
         return {"error": "title is required"}
-    if kind in ("wfs", "wms", "wmts", "ogcapi", "stac") and not url:
+    if kind in ("wfs", "wms", "wmts", "ogcapi", "stac", "text") and not url:
         return {"error": f"url is required for kind {kind!r}"}
     with db.app_pool().connection() as conn:
         # Registering the same endpoint twice must not fork the catalog: a second
@@ -70,12 +71,12 @@ def register(workspace_id: str, kind: str, url: str | None, title: str,
     dataset_id = None
     if kind in HARVEST_JOB:
         job_id = db.enqueue_job(HARVEST_JOB[kind], {"source_id": source_id}, workspace_id)
-    elif kind in ("pdf", "file"):
+    elif kind in ("pdf", "file", "text"):
         # No harvest step for single-artifact sources: the dataset row exists immediately
         # so op='ingest' can target it (contract §MCP server, load op register).
         if not url:
             return {"error": f"url is required for kind {kind!r}"}
-        ds_kind = "document" if kind == "pdf" else "vector"
+        ds_kind = "vector" if kind == "file" else "document"
         with db.app_pool().connection() as conn:
             row = conn.execute(
                 """INSERT INTO catalog.datasets (source_id, external_id, kind, title, description)
@@ -134,14 +135,16 @@ def ingest(workspace_id: str, dataset_id: str, table_name: str | None, target: s
         return {"error": f"no dataset with id {dataset_id!r}"}
 
     if ds["kind"] == "document" or ds["source_kind"] == "pdf":
-        job_kind = "ingest_pdf"
-        pdf_url = ds["external_id"] if str(ds["external_id"]).startswith("http") else ds["source_url"]
-        payload = {"dataset_id": ds["id"], "title": ds["title"], "url": pdf_url}
+        job_kind = "ingest_text" if ds["source_kind"] == "text" else "ingest_pdf"
+        doc_url = ds["external_id"] if str(ds["external_id"]).startswith("http") else ds["source_url"]
+        payload = {"dataset_id": ds["id"], "title": ds["title"], "url": doc_url}
     elif ds["source_kind"] == "file":
         job_kind = "ingest_file"
         payload = {"dataset_id": ds["id"], "path": ds["external_id"], "url": ds["source_url"]}
     elif ds["kind"] == "vector":
-        job_kind = "ingest_wfs"
+        # The driver must match the source protocol: OGC API collections go through
+        # GDAL's OAPIF driver, everything else through the WFS driver.
+        job_kind = "ingest_ogcapi" if ds["source_kind"] == "ogcapi" else "ingest_wfs"
         payload = {"dataset_id": ds["id"]}
     else:
         return {"error": f"dataset kind {ds['kind']!r} (source kind {ds['source_kind']!r}) "

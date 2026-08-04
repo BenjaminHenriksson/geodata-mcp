@@ -46,6 +46,8 @@ EMBED_MODEL=unsloth/embeddinggemma-300m
 EMBED_DIM=256
 GEODATA_API_KEYS=<comma-separated raw keys>   # mcp: bearer auth; refuses to start if empty
 VIEWER_SECRET=<random string>                 # viewer: signs the manager-UI login cookie
+LANTMATERIET_CREDENTIALS=<user:password>      # worker: Basic auth for *.lantmateriet.se sources
+GEODATA_HTTP_CREDENTIALS=<host=user:pw,...>   # worker: per-host auth for other sources (optional)
 ```
 
 Passwords are interpolated into connection URLs verbatim, so they must be URL-safe
@@ -149,8 +151,9 @@ app.workspaces (id uuid PK default gen_random_uuid(),
 CREATE UNIQUE INDEX workspaces_one_active_idx ON app.workspaces (api_key_id) WHERE is_active;
 
 app.jobs       (id bigserial PK,
-                kind text NOT NULL CHECK (kind IN ('harvest_wfs','harvest_wms','ingest_wfs',
-                     'ingest_file','ingest_pdf','embed_catalog','export')),
+                kind text NOT NULL CHECK (kind IN ('harvest_wfs','harvest_wms','harvest_wmts',
+                     'harvest_ogcapi','harvest_stac','ingest_wfs','ingest_ogcapi',
+                     'ingest_file','ingest_pdf','ingest_text','embed_catalog','export')),
                 payload jsonb NOT NULL DEFAULT '{}',
                 status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error')),
                 result jsonb, error text, workspace_id text,
@@ -202,14 +205,28 @@ Single Python process, two responsibilities:
      abstract, keywords, default CRS, WGS84 bbox → transform to 3014 extent polygon), upsert
      `catalog.datasets` rows (kind `vector`). Result: `{datasets: N}`.
    - `harvest_wms {source_id}` — GetCapabilities (WMS 1.3.0), named layers → datasets kind `raster_ref`.
+   - `harvest_wmts {source_id}` — WMTS 1.0.0 GetCapabilities → datasets kind `raster_ref`, with
+     `schema_summary.wmts` = {matrix_sets (name → crs + matrix ids), formats, default_style} so
+     the viewer compilers can build GetTile templates; refreshed on re-harvest.
+   - `harvest_ogcapi {source_id}` — OGC API Features `/collections` (rel=next pagination) →
+     datasets kind `vector` (bbox from extent.spatial, storageCrs as crs_native).
+   - `harvest_stac {source_id}` — STAC `/collections` (paginated, capped at 500) → datasets kind
+     `raster_ref` with `schema_summary.stac` = {license, temporal, assets, bbox_4326}; global
+     extents keep extent_3014 NULL (the shared >10° bbox guard). Catalog visibility only until
+     pgSTAC/TiTiler land.
    - `ingest_wfs {dataset_id, target_schema, table_name}` — `ogr2ogr -f PostgreSQL` from the WFS
      (`WFS:<url>` datasource, `-t_srs EPSG:3014 -nlt PROMOTE_TO_MULTI -lco GEOMETRY_NAME=geom
      -lco FID=fid --config OGR_WFS_PAGING_ALLOWED ON`), into `target_schema.table_name`; then
      update `catalog.datasets.ref_table`, `feature_count`, `schema_summary`; gist index; append
      provenance kind `load`. Connection via `DATABASE_URL_APP` (worker owns ref).
+   - `ingest_ogcapi {dataset_id, target_schema, table_name}` — like ingest_wfs via GDAL's OAPIF
+     driver (`OAPIF:<url>`, `OGR_OAPIF_PAGE_SIZE 1000`).
    - `ingest_file {path|url, table_name, target_schema}` — same via ogr2ogr from GDAL-readable file.
    - `ingest_pdf {dataset_id|url, title}` — download, pdfplumber text per page, ~1200-char chunks
      with 150 overlap, insert doc.documents + doc.chunks, embed chunks (task `document`).
+   - `ingest_text {dataset_id|url, title}` — download (20 MB cap), strip HTML to visible text
+     (stdlib HTMLParser), chunk like ingest_pdf, insert doc.documents + doc.chunks, embed;
+     re-ingesting a URL REPLACES its prior document row (delete-then-insert on source_url).
    - `embed_catalog {}` — embed all `catalog.datasets` rows where `embedding IS NULL OR
      embedding_model <> $EMBED_MODEL` (text = title + description + keywords), and any unembedded
      doc.chunks; batch 32; set `embedding_model`.
@@ -218,6 +235,11 @@ Single Python process, two responsibilities:
      client (use `minio` py lib), plus `<name>.citation.md` sidecar built from `app.provenance` +
      `catalog.sources` for the exported layers when `cite`. Result: `{object_key, sidecar_key}`.
      CSV gets `-lco GEOMETRY=AS_WKT`. GeoJSON in 4326 (`-t_srs EPSG:4326`), others native 3014.
+   - Authenticated sources: `LANTMATERIET_CREDENTIALS=user:password` applies Basic auth to every
+     `*.lantmateriet.se` host; `GEODATA_HTTP_CREDENTIALS=host=user:password,...` per-host entries
+     override it. Worker-env only (never in the catalog); ogr2ogr gets `GDAL_HTTP_USERPWD`
+     scoped to its subprocess. Loads yielding 0 features carry a result `warning` (empty or
+     server-side-broken upstream layers are not presented as clean results).
 2. **Embed HTTP** (same process, FastAPI on :8100):
    - `POST /embed {"texts": [...], "task": "query"|"document"}` → `{"embeddings": [[256 floats]...]}`.
      sentence-transformers `SentenceTransformer(EMBED_MODEL, truncate_dim=256)`;
@@ -266,19 +288,22 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
      `{datasets: [{id, title, kind, external_id, description, ref_table, source_slug, score}...], chunks: [...]}`.
 2. `load(op, ...)` — ops:
    - `register {kind, url, title, slug=None, license='', notes=''}` → insert catalog.sources
-     (added_by = session), enqueue harvest job for wfs/wms; return `{source_id, job_id}`.
-     **Idempotent on (kind, url)**: an already-registered endpoint is re-harvested, never
-     duplicated — a forked catalog doubles search results and embedding cost.
-     For kind `pdf`/`file`: also insert a `catalog.datasets` row immediately (kind `document` /
-     source-kind-appropriate, external_id = url) and return its `dataset_id` so `ingest` can
-     target it without a harvest step.
+     (added_by = session), enqueue harvest job for wfs/wms/wmts/ogcapi/stac; return
+     `{source_id, job_id}`. **Idempotent on (kind, url)**: an already-registered endpoint is
+     re-harvested, never duplicated — a forked catalog doubles search results and embedding cost.
+     For kind `pdf`/`file`/`text`: also insert a `catalog.datasets` row immediately (kind
+     `document`, or `vector` for file, external_id = url) and return its `dataset_id` so
+     `ingest` can target it without a harvest step.
    - `embed {}` → enqueue an `embed_catalog` job; returns `{job_id}`. (Normally triggered after
      harvests/PDF ingests; idempotent — only missing/model-mismatched rows are embedded.)
    - `ingest {dataset_id, table_name=None, target='ref'|'workspace'}` — refuses a target table
      already claimed by a *different* dataset (ogr2ogr runs `-overwrite`, so a name collision
-     would silently replace another dataset's data). → enqueue `ingest_wfs` (or
-     `ingest_pdf` for kind document, `ingest_file` for file sources). `workspace` targets the
-     session's ws schema. Poll the job up to 8 s before returning (`status` in the reply either way).
+     would silently replace another dataset's data). → enqueue the job kind matching the
+     source protocol: vectors → `ingest_wfs` (or `ingest_ogcapi` for ogcapi sources),
+     documents → `ingest_pdf` (or `ingest_text` for text sources), file sources →
+     `ingest_file`; raster_ref is not ingestable (reference on maps via `wms:<id>`).
+     `workspace` targets the session's ws schema. Poll the job up to 8 s before returning
+     (`status` in the reply either way).
    - `inline {rows, table_name, source}` — rows = list of flat dicts, optional `wkt` or
      `lon`/`lat` keys become geom (4326→3014). Synchronous insert into ws schema; provenance kind `inline`.
    - `status {job_id}` → job row. `jobs {}` → last 20 jobs.
@@ -398,3 +423,7 @@ Identifier safety everywhere: schema/table names validated `^[a-z0-9_]{1,63}$` a
    lands in the same workspace with its layers intact.
 7. Both renderers draw the same view: `/v/<id>` (MapLibre) and `/v/<id>?renderer=origo`
    (Origo, EPSG:3014, legend + feature-info popups).
+8. Every register kind has a live connector, verified against the official sources in
+   `data_sources.xlsx` (`scripts/connector_test.py`): all 18 named Sundsvall/Trafikverket WFS
+   layers ingest, the GWC WMTS renders on a map, a text page lands in doc.chunks, and the
+   authenticated Lantmäteriet STAC + WMS harvest with `LANTMATERIET_CREDENTIALS`.

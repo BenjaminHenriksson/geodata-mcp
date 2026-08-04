@@ -8,8 +8,10 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 
 import httpx
+from psycopg.types.json import Json
 
 import dbutil
+import netauth
 from connectors import files
 
 log = logging.getLogger("worker.wfs")
@@ -51,7 +53,8 @@ def _get_source(conn, source_id):
 
 
 def _fetch_capabilities(url: str, params: dict) -> ET.Element:
-    resp = httpx.get(url, params=params, timeout=HTTP_TIMEOUT, follow_redirects=True)
+    resp = httpx.get(url, params=params, timeout=HTTP_TIMEOUT, follow_redirects=True,
+                     auth=netauth.basic_auth_for(url))
     resp.raise_for_status()
     try:
         return ET.fromstring(resp.content)
@@ -77,28 +80,36 @@ def _valid_bbox(bbox):
 
 
 def _upsert_dataset(cur, source_id, external_id, kind, title, description, keywords,
-                    crs_native, bbox) -> None:
+                    crs_native, bbox, schema_summary=None) -> None:
     common = (
         "ON CONFLICT (source_id, external_id) DO UPDATE "
         "SET title = EXCLUDED.title, description = EXCLUDED.description, "
         "keywords = EXCLUDED.keywords, crs_native = EXCLUDED.crs_native, "
         "updated_at = now()"
     )
+    if schema_summary is not None:
+        # Harvest-supplied metadata (e.g. WMTS matrix sets) must refresh on
+        # re-harvest, or the viewer compilers bake stale tile URLs.
+        common += ", schema_summary = EXCLUDED.schema_summary"
+    summary_col = ", schema_summary" if schema_summary is not None else ""
+    summary_ph = ", %s" if schema_summary is not None else ""
+    summary_val = (Json(schema_summary),) if schema_summary is not None else ()
     if bbox is not None:
         cur.execute(
             "INSERT INTO catalog.datasets (source_id, external_id, kind, title, "
-            "description, keywords, crs_native, extent_3014) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, "
+            "description, keywords, crs_native" + summary_col + ", extent_3014) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s" + summary_ph + ", "
             "ST_Transform(ST_MakeEnvelope(%s, %s, %s, %s, 4326), 3014)) " + common,
-            (source_id, external_id, kind, title, description, keywords, crs_native,
-             bbox[0], bbox[1], bbox[2], bbox[3]),
+            (source_id, external_id, kind, title, description, keywords, crs_native)
+            + summary_val + (bbox[0], bbox[1], bbox[2], bbox[3]),
         )
     else:
         cur.execute(
             "INSERT INTO catalog.datasets (source_id, external_id, kind, title, "
-            "description, keywords, crs_native) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) " + common,
-            (source_id, external_id, kind, title, description, keywords, crs_native),
+            "description, keywords, crs_native" + summary_col + ") "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s" + summary_ph + ") " + common,
+            (source_id, external_id, kind, title, description, keywords, crs_native)
+            + summary_val,
         )
 
 
@@ -248,7 +259,7 @@ def ingest_wfs(conn, job) -> dict:
         "--config", "OGR_WFS_PAGING_ALLOWED", "ON",
         "--config", "OGR_WFS_PAGE_SIZE", "1000",
     ]
-    files.run_ogr2ogr_with_retry(args)
+    files.run_ogr2ogr_with_retry(args, env_extra=netauth.gdal_env_for(dataset["source_url"]))
 
     details = {
         "source_url": dataset["source_url"],

@@ -26,12 +26,14 @@ uv venv && uv pip install "mcp>=1.9" httpx
 .venv/bin/python scripts/e2e_test.py              # full agent flow; prints a map URL
 .venv/bin/python scripts/security_test.py         # attack regressions (see Security boundaries)
 .venv/bin/python scripts/validate_data.py         # ingested rows vs each source's own count
+.venv/bin/python scripts/connector_test.py        # all connector kinds vs the official sources
 ```
 
 Upgrading an existing database (pre-auth installs) instead of starting clean:
 
 ```sh
 docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/001_durable_workspaces.sql
+docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/002_connector_job_kinds.sql
 ```
 
 - MCP endpoint (streamable HTTP): `http://localhost:8080/mcp` — **requires
@@ -48,7 +50,7 @@ docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/001_
 |------|--------------|
 | `workspace` | list/create/switch/rename/delete the API key's durable workspaces; the active one receives every layer/map write |
 | `search` | hybrid trigram + EmbeddingGemma vector search over the catalog (2 100+ datasets) and document chunks; `id=` returns full schema + provenance |
-| `load` | register sources (WFS/WMS/file/PDF/inline), harvest capabilities into the catalog, ingest datasets into `ref`/workspace via job queue; `op='embed'` refreshes embeddings |
+| `load` | register sources (WFS/WMS/WMTS/OGC-API/STAC/file/PDF/text/inline), harvest capabilities or collections into the catalog, ingest datasets into `ref`/workspace via job queue; `op='embed'` refreshes embeddings |
 | `query` | read-only SQL as `agent_ro` (PostGIS 3.5 + pgvector, 15 s timeout, 1 000-row cap); every call logged with a `query_id` and server-extracted referenced tables |
 | `layer` | the only write path: CTAS into the active workspace, per-row updates, style/notes; every op appends to the append-only `app.provenance` ledger |
 | `map` | upsert a renderer-agnostic map view; returns a capability URL rendered by MapLibre or Origo; open MapLibre pages pick up changes in ≤ 5 s via ETag polling |
@@ -251,15 +253,20 @@ Verified against the architecture doc by an audit of all 60 requirements (32 don
   slightly under-reported.
 - pgAudit covers the agent roles only; statements run by `geodata_app` (every worker ingest,
   catalog write and viewer read) are not in the audit log.
-- `load(op='register')` accepts `ogcapi`, `wmts`, `stac` and `text` kinds but no connector
-  harvests them — the agent gets a source row it can never ingest. Either build them or
-  narrow the accepted kinds.
+- ~~`load(op='register')` accepts `ogcapi`, `wmts`, `stac` and `text` kinds but no connector
+  harvests them~~ — closed: all four kinds harvest (and ogcapi/text ingest) via
+  `services/worker/connectors/{ogcapi,wmts,stac,textdoc}.py`, verified live against the
+  official sources in `data_sources.xlsx` (`scripts/connector_test.py`; migration
+  `db/migrations/002_connector_job_kinds.sql`). Authenticated Lantmäteriet services use
+  `LANTMATERIET_CREDENTIALS` (see `.env.example`).
 - CSV/XLSX import lands as attribute-only, all-text tables: no geometry from lon/lat or WKT
   columns and no type inference.
 - No successor to v1's `edit_field` add/drop/classify: adding a computed column means
   recreating the layer through `layer(op='create')`.
-- The document half of search has no corpus: both pilot PDFs are scans, so `doc.chunks` is
-  empty and the chunk arms are unexercised. Needs a text-layer PDF (or the deferred OCR model).
+- The document corpus is thin: both pilot PDFs are scans (OCR deferred by decision), so
+  their chunks are empty; the `text` connector now fills `doc.chunks` from web pages
+  (the official NGP page is ingested and searchable) but scanned plan documents still
+  need the OCR model.
 
 **Housekeeping**
 - Exports accumulate in MinIO forever — the presigned URL expires at 24 h, the object doesn't.
@@ -289,11 +296,11 @@ geodata-mcp-architecture.md  target architecture (background)
 docker-compose.yml         the whole system, one command
 db/                        Postgres 17 image (PGDG postgis/pgvector/pgaudit) + init SQL
 services/mcp/              FastMCP server — 7 tools, bearer auth
-services/worker/           job runner: WFS/WMS harvest, ogr2ogr ingest, PDF, embeddings, export
+services/worker/           job runner: WFS/WMS/WMTS/OGC-API/STAC harvest, ogr2ogr ingest, PDF/text, embeddings, export
 services/viewer/           map pages (MapLibre + Origo), workspace manager UI, /data + /tiles
 db/migrations/             idempotent upgrade SQL for existing databases
 deploy/Caddyfile           one-origin reverse proxy
-scripts/                   bootstrap_sundsvall.py, e2e_test.py, security_test.py, mcp_client.py
+scripts/                   bootstrap_sundsvall.py, e2e_test.py, security_test.py, connector_test.py, mcp_client.py
 ```
 
 ## Operational notes
