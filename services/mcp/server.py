@@ -144,7 +144,10 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
          slug: str | None = None, license: str = "", notes: str = "",
          dataset_id: str | None = None, table_name: str | None = None, target: str = "ref",
          rows: list | None = None, source: str | None = None, crs: str | None = None,
-         job_id: int | None = None, ctx: Context = None) -> dict:
+         area: str | None = None, concepts: list | None = None,
+         collection_a: str | None = None, collection_b: str | None = None,
+         threshold: float | None = None, min_area_m2: float | None = None,
+         method: str | None = None, job_id: int | None = None, ctx: Context = None) -> dict:
     """Register data sources and bring datasets into the database. Ops:
 
     - op='register' {kind, url, title, slug?, license?, notes?}: add a source to the catalog.
@@ -163,6 +166,28 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
       EPSG:3014 unless crs='4326'), or 'lon'/'lat' keys (always WGS84). source is
       MANDATORY — say where the data comes from; it is recorded in provenance.
       Column types are inferred (text / double precision / bigint / boolean).
+    - op='change_detect' {area, concepts, collection_a, collection_b, table_name,
+      threshold?, min_area_m2?, method?}: compare two orthophoto vintages with SAM3
+      concept segmentation and write where concepts appeared/disappeared/changed to your
+      workspace. Results are change CANDIDATES for review, not conclusions — inspect them
+      against the imagery before reporting anything. concepts: 1-6 free-text noun phrases,
+      ENGLISH ONLY — the model's text grounding fails silently on Swedish (verified:
+      'byggnad' finds nothing where 'building' scores 0.8+). Translate user terms first,
+      e.g. byggnad→'building', småhus→'house', upplag→'storage yard', pool→'swimming pool',
+      parkeringsplats→'parking lot'.
+      collection_a/collection_b: STAC orthophoto collection ids — list them via the query
+      tool: SELECT d.external_id FROM catalog.datasets d JOIN catalog.sources s
+      ON s.id = d.source_id AND s.kind = 'stac' (e.g. external_id LIKE 'orto-t2-%').
+      area: a layer ref ('ref.<t>' or '<your ws schema>.<t>' — its bounding box is used),
+      'xmin,ymin,xmax,ymax' in EPSG:3014, or EPSG:3014 WKT; max 2 km² per run. Writes
+      <ws>.<table_name> (concept, change_class 'appeared'|'disappeared'|'changed',
+      confidence_a, confidence_b, iou, area_m2, vintage/datetime columns, geom) and
+      <ws>.<table_name>_coverage (tile_id, status 'analyzed'|'missing_a'|'missing_b'|
+      'error', gsd_m, geom). No candidate rows over an 'analyzed' tile means no change
+      found there; any other coverage status means that tile was NOT analyzed — check
+      coverage before reading absence as evidence. Runs minutes; poll with op='status'.
+      Follow up: query the result table, map it over the ortofoto WMS
+      ('wms:<dataset id>' basemap), refine concepts and re-run on subareas.
     - op='status' {job_id}: one job's row (status queued|running|done|error, result, error).
     - op='jobs' {}: the last 20 jobs.
     - op='embed' {}: (re)embed catalog + document chunks for semantic search (idempotent).
@@ -183,6 +208,9 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
             return load_ops.ingest(w.id, str(dataset_id), table_name, target)
         if op == "inline":
             return load_ops.inline(w.id, rows or [], table_name or "", source, crs)
+        if op == "change_detect":
+            return load_ops.change_detect(w.id, area, concepts, collection_a, collection_b,
+                                          table_name, threshold, min_area_m2, method)
         if op == "status":
             if job_id is None:
                 return {"error": "status needs job_id"}
@@ -191,7 +219,7 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
             return load_ops.jobs()
         if op == "embed":
             return load_ops.embed(w.id)
-        return {"error": "op must be one of register|ingest|inline|status|jobs|embed"}
+        return {"error": "op must be one of register|ingest|inline|change_detect|status|jobs|embed"}
     except sessions.AuthError as e:
         return _auth_error(e)
     except Exception as e:

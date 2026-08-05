@@ -3,7 +3,9 @@ and the auth-gated workspace manager UI."""
 import os
 import secrets
 from contextlib import asynccontextmanager
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
+import httpx
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -11,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 import compile_maplibre
 import compile_origo
 import dbq
+import netauth
 import page
 import viewer_auth
 
@@ -292,3 +295,48 @@ def tiles_mvt(layer: str, z: int, x: int, y: int,
         return Response(status_code=204)
     return Response(content=tile, media_type="application/vnd.mapbox-vector-tile",
                     headers={"Cache-Control": "no-store"})
+
+
+@app.get("/wmsref/{dataset_id}")
+def wmsref(dataset_id: str, request: Request,
+           view: str | None = Query(default=None)):
+    """GetMap proxy for authenticated WMS raster_refs. The browser cannot hold the
+    Basic-auth credential, so the compilers point map sources here and the viewer
+    injects it server-side. Capability-checked like /data and /tiles: the dataset's
+    wms: ref must be part of the named view."""
+    if not view:
+        raise HTTPException(status_code=400, detail="view query parameter is required")
+    with dbq.get_pool().connection() as conn:
+        v = _load_view(conn, view, status=403)
+        refs = {e.get("ref") for e in (v["spec"] or {}).get("layers") or []
+                if isinstance(e, dict)}
+        if f"wms:{dataset_id}" not in refs:
+            raise HTTPException(status_code=403, detail="layer is not part of this view")
+        ds = dbq.wms_dataset(conn, dataset_id)
+    if ds is None or not ds["url"]:
+        raise HTTPException(status_code=404, detail="unknown dataset")
+
+    kvp = [(k, val) for k, val in request.query_params.multi_items()
+           if k.lower() != "view"]
+    req_vals = [val for k, val in kvp if k.upper() == "REQUEST"]
+    if not req_vals or any(val.lower() != "getmap" for val in req_vals):
+        raise HTTPException(status_code=403, detail="only GetMap is proxied")
+
+    # Upstream = the catalog url with the client KVP merged in; the source url's
+    # own params survive unless the client sends the same key (case-insensitive).
+    parts = urlsplit(ds["url"])
+    taken = {k.upper() for k, _ in kvp}
+    merged = [(k, val) for k, val in parse_qsl(parts.query, keep_blank_values=True)
+              if k.upper() not in taken] + kvp
+    upstream = urlunsplit((parts.scheme, parts.netloc, parts.path,
+                           urlencode(merged, quote_via=quote), ""))
+    try:
+        resp = httpx.get(upstream, auth=netauth.basic_auth_for(upstream), timeout=30.0)
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="upstream WMS request failed")
+    if resp.status_code != 200:
+        return Response(content=f"upstream WMS returned {resp.status_code}",
+                        status_code=502, media_type="text/plain")
+    return Response(content=resp.content,
+                    media_type=resp.headers.get("content-type", "application/octet-stream"),
+                    headers={"Cache-Control": "private, max-age=3600"})

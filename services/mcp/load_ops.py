@@ -181,6 +181,158 @@ def ingest(workspace_id: str, dataset_id: str, table_name: str | None, target: s
     return geometry.jsonable_row(reply)
 
 
+# ── change detection ─────────────────────────────────────────────────────────
+
+CHANGE_AREA_CAP_KM2 = 2.0
+_AREA_FORMS = ("a layer ref like 'ref.byggnader' or '<ws schema>.sites', "
+               "'xmin,ymin,xmax,ymax' in EPSG:3014, or WKT in EPSG:3014")
+
+
+def _resolve_area_wkt(conn, area: str) -> tuple[str | None, str | None]:
+    """Resolve the area argument to EPSG:3014 WKT. Returns (wkt, error).
+
+    On the WKT-parse failure path the connection's transaction is aborted — callers
+    must return the error without issuing further statements on this connection.
+    """
+    m = sqlguard.LAYER_REF_RE.match(area)
+    if m:
+        schema, table = m.group(1), m.group(2)
+        exists = conn.execute("SELECT to_regclass(%s)", (area,)).fetchone()
+        if exists is None or exists[0] is None:
+            return None, f"table {area!r} does not exist — check layer(op='list')"
+        geom_col = conn.execute(
+            """SELECT column_name FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = %s AND udt_name = 'geometry'
+                ORDER BY ordinal_position LIMIT 1""",
+            (schema, table),
+        ).fetchone()
+        if not geom_col:
+            return None, f"table {area!r} has no geometry column"
+        row = conn.execute(
+            pgsql.SQL("SELECT ST_AsText(ST_Envelope(ST_Extent({}))) FROM {}").format(
+                pgsql.Identifier(geom_col[0]),
+                sqlguard.qualified(schema, table))
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None, f"table {area!r} is empty — no extent to analyze"
+        return row[0], None
+    parts = [p.strip() for p in area.split(",")]
+    if len(parts) == 4:
+        try:
+            nums = [float(p) for p in parts]
+        except ValueError:
+            nums = None
+        if nums is not None:
+            row = conn.execute(
+                "SELECT ST_AsText(ST_MakeEnvelope(%s, %s, %s, %s, 3014))", nums
+            ).fetchone()
+            return row[0], None
+    try:
+        row = conn.execute("SELECT ST_AsText(ST_GeomFromText(%s, 3014))", (area,)).fetchone()
+        return row[0], None
+    except Exception:
+        return None, f"could not parse area {area!r} — pass {_AREA_FORMS}"
+
+
+def change_detect(workspace_id: str, area: str | None, concepts: list | None,
+                  collection_a: str | None, collection_b: str | None,
+                  table_name: str | None, threshold: float | None,
+                  min_area_m2: float | None, method: str | None) -> dict:
+    """Validate and enqueue a SAM3 orthophoto change-detection job (worker does the rest)."""
+    if not isinstance(concepts, list) or not 1 <= len(concepts) <= 6:
+        return {"error": "concepts must be a list of 1-6 noun phrases, "
+                         "e.g. ['byggnad', 'pool', 'upplag']"}
+    clean_concepts = [str(c).strip() for c in concepts]
+    if any(not 1 <= len(c) <= 80 for c in clean_concepts):
+        return {"error": "each concept must be 1-80 characters after trimming"}
+    if not collection_a or not collection_b:
+        return {"error": "collection_a and collection_b are required — query catalog.datasets "
+                         "(source kind 'stac') to list orthophoto collections"}
+    if collection_a == collection_b:
+        return {"error": "collection_a and collection_b must be different vintages"}
+    if not area or not isinstance(area, str):
+        return {"error": f"area is required — pass {_AREA_FORMS}"}
+    if not table_name:
+        return {"error": "table_name is required — results land in <ws>.<table_name> "
+                         "and <ws>.<table_name>_coverage"}
+    if not sqlguard.LAYER_NAME_RE.match(table_name):
+        return {"error": f"table_name {table_name!r} invalid — use ^[a-z][a-z0-9_]{{0,59}}$"}
+    if len(table_name) > 54:
+        # the '_coverage' companion must also fit Postgres's 63-char identifier limit
+        return {"error": "table_name too long — max 54 chars so <table_name>_coverage "
+                         "stays a valid identifier"}
+    try:
+        thr = 0.5 if threshold is None else float(threshold)
+    except (TypeError, ValueError):
+        return {"error": "threshold must be a number between 0.05 and 0.95"}
+    if not 0.05 <= thr <= 0.95:
+        return {"error": f"threshold {thr} out of bounds — use 0.05..0.95 (default 0.5)"}
+    min_area = None
+    if min_area_m2 is not None:
+        try:
+            min_area = float(min_area_m2)
+        except (TypeError, ValueError):
+            return {"error": "min_area_m2 must be a positive number"}
+        if min_area <= 0:
+            return {"error": "min_area_m2 must be a positive number"}
+    method = method or "mask_compare"
+    if method != "mask_compare":
+        return {"error": f"method {method!r} not implemented — 'mask_compare' is the only "
+                         "method today (raster_diff and dsm_diff are documented future methods)"}
+
+    ws = sessions.ws_schema_for(workspace_id)
+    with db.app_pool().connection() as conn:
+        for cid in (collection_a, collection_b):
+            row = conn.execute(
+                """SELECT 1 FROM catalog.datasets d
+                     JOIN catalog.sources s ON s.id = d.source_id AND s.kind = 'stac'
+                    WHERE d.external_id = %s""",
+                (cid,),
+            ).fetchone()
+            if row is None:
+                return {"error": f"unknown collection {cid!r} — query catalog.datasets "
+                                 "(source kind 'stac') to list orthophoto collections"}
+        for t in (table_name, f"{table_name}_coverage"):
+            exists = conn.execute("SELECT to_regclass(%s)", (f"{ws}.{t}",)).fetchone()
+            if exists and exists[0] is not None:
+                return {"error": f"{ws}.{t} already exists — drop it via layer(op='drop') "
+                                 "or pick another table_name"}
+        area_wkt, err = _resolve_area_wkt(conn, area)
+        if err:
+            return {"error": err}
+        row = conn.execute(
+            "SELECT ST_IsEmpty(g), ST_Dimension(g), ST_Area(g) / 1e6"
+            " FROM (SELECT ST_GeomFromText(%s, 3014) AS g) t", (area_wkt,)
+        ).fetchone()
+        if row[0]:
+            return {"error": f"area is empty — pass {_AREA_FORMS}"}
+        if row[1] < 2:
+            return {"error": f"area must be an areal geometry (polygon) — pass {_AREA_FORMS}"}
+        area_km2 = float(row[2])
+        if area_km2 > CHANGE_AREA_CAP_KM2:
+            return {"error": f"area is {area_km2:.2f} km² — cap is {CHANGE_AREA_CAP_KM2:g} km² "
+                             "per run; tile larger studies into multiple calls"}
+
+    target_schema = sessions.ensure_ws_schema(workspace_id)
+    payload = {"area_wkt_3014": area_wkt, "table_name": table_name,
+               "target_schema": target_schema, "concepts": clean_concepts,
+               "collection_a": collection_a, "collection_b": collection_b,
+               "threshold": thr, "min_area_m2": min_area, "method": method}
+    job_id = db.enqueue_job("change_detect", payload, workspace_id)
+    job = db.wait_for_job(job_id, timeout_s=8.0)
+    reply = {"job_id": job_id, "kind": "change_detect",
+             "status": job["status"] if job else "queued"}
+    if job:
+        if job.get("result"):
+            reply["result"] = job["result"]
+        if job.get("error"):
+            reply["error"] = job["error"]
+    if reply["status"] in ("queued", "running"):
+        reply["note"] = ("SAM3 inference typically runs minutes (the first call also loads "
+                         "the model) — poll with load(op='status', job_id=...)")
+    return geometry.jsonable_row(reply)
+
+
 # ── inline rows ──────────────────────────────────────────────────────────────
 
 _GEO_KEYS = ("wkt", "lon", "lat")

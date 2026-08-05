@@ -5,7 +5,7 @@ for the v1 build. When architecture doc and this file disagree, this file wins.
 
 Scope notes for this build:
 - Target municipality: **Sundsvall** (GovTech Pilot 3, `data_sources.xlsx`). CRS **EPSG:3014** (SWEREF 99 17 15).
-- Only local model: **EmbeddingGemma-300M** via ungated mirror `unsloth/embeddinggemma-300m`, truncated to **256 dims**, run inside the worker container (CPU). SAM 3 change detection, LightOnOCR, pgSTAC/TiTiler: **deferred** (documented, not built).
+- Local models: **EmbeddingGemma-300M** via ungated mirror `unsloth/embeddinggemma-300m`, truncated to **256 dims**, run inside the worker container (CPU); **SAM 3** concept segmentation for orthophoto change detection via `mlx-community/sam3-image`, run natively on the host by `services/segmenter/` (MLX needs Apple Silicon — the HTTP contract in that service is the seam for swapping in `facebook/sam3` on transformers/GPU). LightOnOCR, pgSTAC/TiTiler: **deferred** (documented, not built).
 - Map snapshot PNG: deferred. **Both renderers are interactive**: MapLibre GL JS at `/v/<id>`, Origo 2.10 (OpenLayers) at `/v/<id>?renderer=origo`, compiled from the same map spec and vendored into the viewer image.
 
 ## Topology (docker compose, one origin via Caddy)
@@ -18,6 +18,12 @@ Scope notes for this build:
 | viewer   | viewer        | 8001            | —         | map pages + data endpoint + workspace manager UI |
 | worker   | worker        | 8100            | —         | job runner + `/embed` HTTP |
 | minio    | minio         | 9000 (api)      | 9000      | exports bucket; presigned URLs use host port |
+
+Outside compose: **segmenter** (`services/segmenter/`, native host process, port **8200**) — SAM 3
+concept segmentation over HTTP. The worker reaches it via `SAM3_URL` (default
+`http://host.docker.internal:8200`; compose adds the `host-gateway` extra_host for Linux
+engines). MLX cannot run in Linux containers; the same HTTP contract is served by the
+`transformers` backend (`SAM3_BACKEND=transformers`, `[hf]` extra) for a Linux/GPU deployment.
 
 Caddy routes (host `http://localhost:8080`):
 - `/mcp*` → `mcp:8000` (path preserved)
@@ -46,8 +52,9 @@ EMBED_MODEL=unsloth/embeddinggemma-300m
 EMBED_DIM=256
 GEODATA_API_KEYS=<comma-separated raw keys>   # mcp: bearer auth; refuses to start if empty
 VIEWER_SECRET=<random string>                 # viewer: signs the manager-UI login cookie
-LANTMATERIET_CREDENTIALS=<user:password>      # worker: Basic auth for *.lantmateriet.se sources
-GEODATA_HTTP_CREDENTIALS=<host=user:pw,...>   # worker: per-host auth for other sources (optional)
+LANTMATERIET_CREDENTIALS=<user:password>      # worker + viewer: Basic auth for *.lantmateriet.se
+GEODATA_HTTP_CREDENTIALS=<host=user:pw,...>   # worker + viewer: per-host auth (optional)
+SAM3_URL=http://host.docker.internal:8200     # worker: segmenter service (native host process)
 ```
 
 Passwords are interpolated into connection URLs verbatim, so they must be URL-safe
@@ -153,7 +160,8 @@ CREATE UNIQUE INDEX workspaces_one_active_idx ON app.workspaces (api_key_id) WHE
 app.jobs       (id bigserial PK,
                 kind text NOT NULL CHECK (kind IN ('harvest_wfs','harvest_wms','harvest_wmts',
                      'harvest_ogcapi','harvest_stac','ingest_wfs','ingest_ogcapi',
-                     'ingest_file','ingest_pdf','ingest_text','embed_catalog','export')),
+                     'ingest_file','ingest_pdf','ingest_text','embed_catalog','export',
+                     'change_detect')),
                 payload jsonb NOT NULL DEFAULT '{}',
                 status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error')),
                 result jsonb, error text, workspace_id text,
@@ -171,7 +179,8 @@ app.layer_meta (schema_name text, table_name text, style jsonb DEFAULT '{}', not
 
 app.provenance (id bigserial PK, ts timestamptz DEFAULT now(),
                 workspace_id text, kind text NOT NULL,   -- 'load','layer_create','layer_update',
-                                                        -- 'layer_drop','layer_rename','ddl_event','export','inline'
+                                                        -- 'layer_drop','layer_rename','ddl_event',
+                                                        -- 'export','inline','change_detect'
                 object_ref text,                        -- 'schema.table' or dataset id or export key
                 sql_text text, input_tables text[], job_id bigint, details jsonb DEFAULT '{}')
 -- append-only: REVOKE UPDATE, DELETE ON app.provenance FROM PUBLIC and all app roles.
@@ -235,6 +244,26 @@ Single Python process, two responsibilities:
      client (use `minio` py lib), plus `<name>.citation.md` sidecar built from `app.provenance` +
      `catalog.sources` for the exported layers when `cite`. Result: `{object_key, sidecar_key}`.
      CSV gets `-lco GEOMETRY=AS_WKT`. GeoJSON in 4326 (`-t_srs EPSG:4326`), others native 3014.
+   - `change_detect {area_wkt_3014, table_name, target_schema, concepts, collection_a,
+     collection_b, threshold, min_area_m2, method}` — SAM 3 orthophoto change detection
+     (architecture §7, method `mask_compare` only). STAC item search over the area per
+     collection (public endpoints; items filtered to `spektraltyp in (rgb, rgbi)`), window
+     grid in EPSG:3006 at 1008 px / 96 px overlap at the pair's coarsest GSD (≤ 128 tiles),
+     per-vintage `gdal.BuildVRT` over `/vsicurl/` COG hrefs (Basic auth via GDAL config,
+     never logged), per-window PNG → `POST {SAM3_URL}/segment` with the concepts, masks
+     georeferenced via MEM datasets (bytes only — no numpy/gdal_array, whose ABI is broken
+     in-container) and polygonized, then one PostGIS pass: per-vintage/concept union + dump,
+     morphological opening at 2·GSD (misregistration slivers), IoU full-outer match →
+     `appeared`/`disappeared`/`changed` (IoU < 0.80), min-area filter (default
+     `15·(gsd/0.16)²` m²). Segmenter 5xx aborts the job (a failing backend must not yield a
+     clean zero-candidate result); per-tile 4xx → coverage `error`. Writes
+     `{table}` (concept, change_class, confidence_a/b, iou, area_m2, vintage_a/b,
+     datetime_a/b, geom Polygon 3014) and `{table}_coverage` (tile_id, status
+     `analyzed|missing_a|missing_b|error`, gsd_m, geom) — grants + `OWNER TO agent_ws`,
+     provenance kind `change_detect` (model, prompts, items, thresholds in details).
+     Existing output tables are dropped only when this job's own provenance row claims
+     them (attempt-2 rerun); otherwise the job refuses. The output transaction runs with
+     `SET LOCAL statement_timeout='15min'` (role default 120 s is too small for the diff SQL).
    - Authenticated sources: `LANTMATERIET_CREDENTIALS=user:password` applies Basic auth to every
      `*.lantmateriet.se` host; `GEODATA_HTTP_CREDENTIALS=host=user:password,...` per-host entries
      override it. Worker-env only (never in the catalog); ogr2ogr gets `GDAL_HTTP_USERPWD`
@@ -304,6 +333,15 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
      `ingest_file`; raster_ref is not ingestable (reference on maps via `wms:<id>`).
      `workspace` targets the session's ws schema. Poll the job up to 8 s before returning
      (`status` in the reply either way).
+   - `change_detect {area, concepts, collection_a, collection_b, table_name, threshold=0.5,
+     min_area_m2=None, method='mask_compare'}` — enqueue a SAM 3 change-detection job (kind
+     `change_detect`). `area`: layer ref (`ref.x`/`ws_….x`, envelope of its extent), bbox
+     string `'xmin,ymin,xmax,ymax'` (3014), or WKT 3014; must be a non-empty areal geometry
+     ≤ **2.0 km²**. `concepts`: 1–6 free-text noun phrases (each ≤ 80 chars). Collections
+     are `catalog.datasets.external_id` values from a `stac` source; must exist and differ.
+     Refuses if `{table}` or `{table}_coverage` already exists. `ensure_ws_schema` before
+     enqueue; waits up to 8 s then returns the ingest-style `{job_id, status, note}` reply.
+     Docstring frames results as screening candidates, never assertions.
    - `inline {rows, table_name, source}` — rows = list of flat dicts, optional `wkt` or
      `lon`/`lat` keys become geom (4326→3014). Synchronous insert into ws schema; provenance kind `inline`.
    - `status {job_id}` → job row. `jobs {}` → last 20 jobs.
@@ -398,6 +436,14 @@ FastAPI on :8001. DB via `DATABASE_URL_APP` (read paths only, plus workspace-man
   `svgSpritePath: /static/origo/css/svg/` — without that override every toolbar icon 404s
   silently. It polls `geodata.version` and offers a reload button on change (OpenLayers has no
   style-diff equivalent to MapLibre's `setStyle({diff:true})`).
+- `GET /wmsref/{dataset_id}?view=<view_id>&<WMS KVP>` — authenticated-WMS relay. Both
+  compilers emit this instead of the direct upstream URL **only** when
+  `netauth.userpwd_for(source url)` finds credentials (viewer carries a verbatim copy of the
+  worker's `netauth.py` and receives the same credential env vars). Capability check: the view
+  must exist and reference `wms:<dataset_id>`; `REQUEST` must be GetMap (case-insensitive,
+  every occurrence) else 403; upstream query = source URL's own params overlaid by the client
+  KVP minus `view`; Basic auth injected server-side, never logged; upstream non-200 → 502;
+  `Cache-Control: private, max-age=3600`. Unauthenticated WMS output is byte-identical to before.
 - `GET /data/{layer}.geojson?view=<view_id>&crs=4326|3014&limit=<n≤50000>` — `layer` is
   `schema.table`; **require** the `view` param and check the layer is referenced by that view
   (capability check); ST_AsGeoJSON FeatureCollection, default cap 20 000 features, geometry
@@ -427,3 +473,7 @@ Identifier safety everywhere: schema/table names validated `^[a-z0-9_]{1,63}$` a
    `data_sources.xlsx` (`scripts/connector_test.py`): all 18 named Sundsvall/Trafikverket WFS
    layers ingest, the GWC WMTS renders on a map, a text page lands in doc.chunks, and the
    authenticated Lantmäteriet STAC + WMS harvest with `LANTMATERIET_CREDENTIALS`.
+9. Orthophoto change detection end to end (`scripts/change_detect_test.py`, segmenter running
+   on the host): `load(op='change_detect')` over two Lantmäteriet T2 vintages writes the
+   candidates + coverage tables into the workspace, and the map view renders them over the
+   årsvisa ortofoto WMS through `/wmsref` (migration 003 applied).

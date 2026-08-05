@@ -1,0 +1,30 @@
+# Standalone SAM3 segmenter service — runs natively on the host (MLX cannot run
+# in Linux containers). Install with `uv sync`; the hf extra swaps in the
+# transformers backend for a future Linux/GPU deployment (see README.md).
+[project]
+name = "segmenter"
+version = "0.1.0"
+description = "SAM3 concept segmentation HTTP service for geodata-mcp-v2 change detection"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pillow>=10",
+    "numpy>=2",
+    "huggingface-hub>=0.26",
+    "mlx>=0.30",
+    "torch>=2.9.1",
+    # Pinned to the mlx_sam3 HEAD commit verified against this service. Import
+    # name is `sam3` — never install the HF/Meta sam3 package in the same venv.
+    "mlx-sam3 @ git+https://github.com/Deekshith-Dade/mlx_sam3.git@9eacae749049e2b864fe63f90f3dd17c689bee03",
+]
+
+[project.optional-dependencies]
+hf = [
+    "transformers>=5,<6",
+    "torch>=2.9",
+    "accelerate>=1.1",
+]
+
+[tool.uv]
+package = false

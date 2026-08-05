@@ -84,6 +84,10 @@ services:
       # every *.lantmateriet.se service, per-host entries for anything else.
       LANTMATERIET_CREDENTIALS: ${LANTMATERIET_CREDENTIALS:-}
       GEODATA_HTTP_CREDENTIALS: ${GEODATA_HTTP_CREDENTIALS:-}
+      # SAM3 segmenter runs natively on the host (see services/segmenter/README.md).
+      SAM3_URL: ${SAM3_URL:-http://host.docker.internal:8200}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,6 +108,9 @@ services:
       <<: *appenv
       # Signs the workspace-manager login cookie (any long random string).
       VIEWER_SECRET: ${VIEWER_SECRET:?set in .env}
+      # For the authenticated-WMS proxy (/wmsref); same vars as the worker.
+      LANTMATERIET_CREDENTIALS: ${LANTMATERIET_CREDENTIALS:-}
+      GEODATA_HTTP_CREDENTIALS: ${GEODATA_HTTP_CREDENTIALS:-}
     depends_on:
       postgres:
         condition: service_healthy

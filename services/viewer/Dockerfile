@@ -28,7 +28,7 @@ RUN mkdir -p /app/static/origo \
  && rm -rf /app/static/origo/examples /app/static/origo/data \
            /app/static/origo/index.html /app/static/origo/index.json
 
-COPY main.py compile_maplibre.py compile_origo.py dbq.py page.py viewer_auth.py /app/
+COPY main.py compile_maplibre.py compile_origo.py dbq.py netauth.py page.py viewer_auth.py /app/
 
 EXPOSE 8001
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]

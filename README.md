@@ -27,6 +27,8 @@ uv venv && uv pip install "mcp>=1.9" httpx
 .venv/bin/python scripts/security_test.py         # attack regressions (see Security boundaries)
 .venv/bin/python scripts/validate_data.py         # ingested rows vs each source's own count
 .venv/bin/python scripts/connector_test.py        # all connector kinds vs the official sources
+uv run --with "mcp>=1.9" --with httpx python scripts/change_detect_test.py
+                                                  # SAM3 change detection E2E (segmenter must run)
 ```
 
 Upgrading an existing database (pre-auth installs) instead of starting clean:
@@ -34,6 +36,7 @@ Upgrading an existing database (pre-auth installs) instead of starting clean:
 ```sh
 docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/001_durable_workspaces.sql
 docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/002_connector_job_kinds.sql
+docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/003_change_detection.sql
 ```
 
 - MCP endpoint (streamable HTTP): `http://localhost:8080/mcp` — **requires
@@ -226,8 +229,16 @@ zero chunks and a warning, because OCR is deferred by decision (§ model stack).
   sentence-transformers config), truncated to 256 dims, CPU, inside the worker container.
   Serves both document/catalog embedding (jobs) and query embedding (`POST worker:8100/embed`).
   `embedding_model` is stored on every embedded row so model swaps are detectable.
-- Deferred by decision: SAM 3 change detection (§7 of the architecture), LightOnOCR for
-  scanned plans, rerankers. The job queue, STAC slot, and doc pipeline are in place for them.
+- SAM 3 (`mlx-community/sam3-image`, ~3.4 GB) runs natively on the host in
+  `services/segmenter/` — MLX needs Apple Silicon and cannot run in a Linux container. The
+  worker reaches it over HTTP (`SAM3_URL`), and that HTTP contract is the swap seam for the
+  standard `facebook/sam3` on transformers/GPU (`SAM3_BACKEND=transformers`, `[hf]` extra;
+  the HF repo is gated — request access early). Start it with
+  `cd services/segmenter && uv sync && uv run uvicorn app:app --host 0.0.0.0 --port 8200`;
+  the first inference downloads the weights. SAM 3 ships under Meta's custom SAM license —
+  have it reviewed before it goes into a municipal contract deliverable (architecture §7).
+- Deferred by decision: LightOnOCR for scanned plans, rerankers. The job queue and doc
+  pipeline are in place for them.
 
 ## What's left
 
@@ -280,8 +291,9 @@ Verified against the architecture doc by an audit of all 60 requirements (32 don
 
 - **OGC services** (Martin / TiPg / TiTiler-pgSTAC) — the thin `/data` + `/tiles` endpoint is
   the v1 seam; compilers repoint when the swap happens (§5.3).
-- **pgSTAC + orthophoto change detection** — additive milestone (§7); WMS ortofoto reference
-  layers already flow through map specs today.
+- **pgSTAC / TiTiler** — change detection (§7) is now live without them: the worker queries
+  the Lantmäteriet STAC API directly at job time and windows the COGs via `/vsicurl/`.
+  pgSTAC-backed vintage SQL and browser-side COG tiles remain the documented upgrade.
 - **Auth beyond a bearer key** — static API keys gate `/mcp` and the manager UI today; OAuth,
   per-user accounts or signed tokens at the Caddy chokepoint remain later work (§5.2). Map
   view URLs stay capability links by design.
@@ -296,11 +308,12 @@ geodata-mcp-architecture.md  target architecture (background)
 docker-compose.yml         the whole system, one command
 db/                        Postgres 17 image (PGDG postgis/pgvector/pgaudit) + init SQL
 services/mcp/              FastMCP server — 7 tools, bearer auth
-services/worker/           job runner: WFS/WMS/WMTS/OGC-API/STAC harvest, ogr2ogr ingest, PDF/text, embeddings, export
-services/viewer/           map pages (MapLibre + Origo), workspace manager UI, /data + /tiles
+services/worker/           job runner: WFS/WMS/WMTS/OGC-API/STAC harvest, ogr2ogr ingest, PDF/text, embeddings, export, SAM3 change detection
+services/viewer/           map pages (MapLibre + Origo), workspace manager UI, /data + /tiles + /wmsref auth proxy
+services/segmenter/        SAM3 segmentation HTTP service — native host process (MLX), transformers backend for GPU boxes
 db/migrations/             idempotent upgrade SQL for existing databases
 deploy/Caddyfile           one-origin reverse proxy
-scripts/                   bootstrap_sundsvall.py, e2e_test.py, security_test.py, connector_test.py, mcp_client.py
+scripts/                   bootstrap_sundsvall.py, e2e_test.py, security_test.py, connector_test.py, change_detect_test.py, mcp_client.py
 ```
 
 ## Operational notes

@@ -3,6 +3,7 @@ import os
 from urllib.parse import quote
 
 import dbq
+import netauth
 
 POSITRON_TILES = "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png"
 CARTO_ATTRIBUTION = "© OpenStreetMap contributors © CARTO"
@@ -22,6 +23,16 @@ def wms_tile_url(base_url, external_id):
     sep = "&" if "?" in base_url else "?"
     return (base_url + sep
             + "SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0"
+            + "&LAYERS=" + quote(external_id or "", safe="")
+            + "&STYLES=&FORMAT=image/png&TRANSPARENT=true&CRS=EPSG:3857"
+            + "&WIDTH=256&HEIGHT=256&BBOX={bbox-epsg-3857}")
+
+
+def wms_proxy_tile_url(dataset_id, view_id, external_id):
+    """Same GetMap template, addressed at the viewer's /wmsref proxy (relative URL,
+    same origin — like the /data URLs) for upstreams that need Basic auth."""
+    return (f"/wmsref/{dataset_id}?view={view_id}"
+            + "&SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0"
             + "&LAYERS=" + quote(external_id or "", safe="")
             + "&STYLES=&FORMAT=image/png&TRANSPARENT=true&CRS=EPSG:3857"
             + "&WIDTH=256&HEIGHT=256&BBOX={bbox-epsg-3857}")
@@ -110,6 +121,9 @@ def compile_style(conn, view):
                 tiles = wmts_tile_url(ds)
                 if not tiles:
                     continue  # no Web-Mercator matrix set — nothing MapLibre can address
+            elif netauth.userpwd_for(ds["url"]) is not None:
+                # The browser cannot hold the upstream credential; the proxy injects it.
+                tiles = wms_proxy_tile_url(ref[4:], view_id, ds["external_id"])
             else:
                 tiles = wms_tile_url(ds["url"], ds["external_id"])
             sid = f"wms_{i}"

@@ -11,6 +11,7 @@ import html
 import os
 
 import dbq
+import netauth
 from compile_maplibre import (DEFAULT_CIRCLE_RADIUS, DEFAULT_FILL_OPACITY,
                               DEFAULT_LINE_WIDTH, DEFAULT_PALETTE,
                               DEFAULT_POLYGON_OUTLINE_WIDTH,
@@ -126,17 +127,18 @@ def compile_origo(conn, view):
     layers_out = []
     basemap_layers = []
 
-    def add_wms_layer(ds, title, visible, group):
+    def add_wms_layer(ds, title, visible, group, source_url=None):
+        source_url = source_url or ds["url"]
         src_key = "wms_" + str(len(sources))
         # Reuse a source block when several layers share the endpoint.
         for k, v in sources.items():
-            if v["url"] == ds["url"]:
+            if v["url"] == source_url:
                 src_key = k
                 break
         else:
             # WMS 1.1.1 like Sundsvall's own configs: axis order stays x,y in
             # projected CRS, sidestepping the 1.3.0 north-first flip.
-            sources[src_key] = {"url": ds["url"], "version": "1.1.1"}
+            sources[src_key] = {"url": source_url, "version": "1.1.1"}
         layer = {"name": ds["external_id"], "title": _text(title), "type": "WMS",
                  "source": src_key, "format": "image/png",
                  "visible": visible, "group": group}
@@ -182,7 +184,8 @@ def compile_origo(conn, view):
             continue
 
         if ref.startswith("wms:"):
-            ds = dbq.wms_dataset(conn, ref[4:])
+            dataset_id = ref[4:]
+            ds = dbq.wms_dataset(conn, dataset_id)
             if ds is None or not ds["url"]:
                 continue
             if ds.get("source_kind") == "wmts":
@@ -192,8 +195,14 @@ def compile_origo(conn, view):
                 # renders in the MapLibre view; its WMS twin renders in both.
                 wmts_skipped.append(entry.get("label") or ds["title"])
                 continue
+            source_url = None
+            if netauth.userpwd_for(ds["url"]) is not None:
+                # The browser cannot hold the upstream credential; point the source
+                # at the /wmsref proxy instead (OpenLayers appends its GetMap KVP
+                # to the existing query string).
+                source_url = f"/wmsref/{dataset_id}?view={view_id}"
             add_wms_layer(ds, entry.get("label") or ds["title"],
-                          entry.get("visible") is not False, "root")
+                          entry.get("visible") is not False, "root", source_url)
             continue
 
         parsed = dbq.split_layer_ref(ref)
