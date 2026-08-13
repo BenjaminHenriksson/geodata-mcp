@@ -12,10 +12,10 @@ import os
 
 import dbq
 import netauth
-from compile_maplibre import (DEFAULT_CIRCLE_RADIUS, DEFAULT_FILL_OPACITY,
-                              DEFAULT_LINE_WIDTH, DEFAULT_PALETTE,
-                              DEFAULT_POLYGON_OUTLINE_WIDTH,
-                              DEFAULT_POLYGON_STROKE, _num)
+from compile_maplibre import (CODE_VERSION, DEFAULT_CIRCLE_RADIUS,
+                              DEFAULT_FILL_OPACITY, DEFAULT_LINE_WIDTH,
+                              DEFAULT_PALETTE, DEFAULT_POLYGON_OUTLINE_WIDTH,
+                              DEFAULT_POLYGON_STROKE, _num, resolve_popup_attrs)
 
 PROJ4_3014 = ("+proj=tmerc +lat_0=0 +lon_0=17.25 +k=1 +x_0=150000 +y_0=0 "
               "+ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs")
@@ -220,9 +220,7 @@ def compile_origo(conn, view):
             eff.update({k: v for k, v in entry_style.items() if v is not None})
         visible = entry["visible"] if isinstance(entry.get("visible"), bool) else meta["visible"]
         label = entry.get("label") or meta["label"] or table
-        popup_attrs = entry["popup"] if "popup" in entry else meta["popup"]
-        if not isinstance(popup_attrs, list):
-            popup_attrs = []
+        popup_attrs = resolve_popup_attrs(entry, meta, cols)
         gclass = dbq.geometry_class(conn, schema, table)
         base_color = DEFAULT_PALETTE[vec_index % len(DEFAULT_PALETTE)]
         vec_index += 1
@@ -283,7 +281,8 @@ def compile_origo(conn, view):
     # `revision` covers app.layer_meta as well as the view row, mirroring the MapLibre
     # ETag: otherwise a layer(op='style') change would never prompt a reload.
     config["geodata"] = {"view_id": view_id, "version": view["version"],
-                         "revision": f"{view['version']}-{dbq.layer_meta_fingerprint(conn, spec)}",
+                         "revision": (f"{view['version']}-{dbq.layer_meta_fingerprint(conn, spec)}"
+                                      f"-{CODE_VERSION}"),
                          "title": spec.get("title") or view.get("title") or ""}
     if wmts_skipped:
         skip_note = ("WMTS layer(s) not shown here — their tile grid does not match this "

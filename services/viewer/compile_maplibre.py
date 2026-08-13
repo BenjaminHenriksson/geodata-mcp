@@ -1,9 +1,31 @@
 """Compile an app.map_views spec into a MapLibre GL style document."""
+import hashlib
 import os
+import pathlib
 from urllib.parse import quote
 
 import dbq
 import netauth
+
+
+def _code_version():
+    """Short fingerprint of the compiler code, folded into the style ETag and the
+    Origo revision. The view version + layer_meta fingerprint alone do NOT change
+    when only the viewer code changes, so a deploy that alters compiled output
+    (new default popups, style tweaks, MVT/GeoJSON shape) would otherwise keep
+    serving a stale style to any page holding a cached copy. Hashing the compiler
+    sources makes every such deploy bust client caches automatically."""
+    here = pathlib.Path(__file__).parent
+    h = hashlib.sha1()
+    for name in ("compile_maplibre.py", "compile_origo.py", "dbq.py"):
+        try:
+            h.update((here / name).read_bytes())
+        except OSError:
+            pass
+    return h.hexdigest()[:8]
+
+
+CODE_VERSION = _code_version()
 
 POSITRON_TILES = "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png"
 CARTO_ATTRIBUTION = "© OpenStreetMap contributors © CARTO"
@@ -80,6 +102,21 @@ def _num(value, default):
     return default
 
 
+def resolve_popup_attrs(entry, meta, cols):
+    """Attribute names to expose in a vector layer's feature-info popup.
+
+    Precedence: an explicit ``popup`` on the map entry wins (including ``[]``,
+    which deliberately disables the popup); then the layer's stored popup; then
+    a default of every non-geometry column, so any layer is click-to-inspect
+    without needing to be configured first. Shared by both renderers.
+    """
+    if "popup" in entry:
+        return [str(a) for a in entry["popup"]] if isinstance(entry["popup"], list) else []
+    if meta["popup"]:
+        return [str(a) for a in meta["popup"]]
+    return dbq.non_geom_columns(cols)
+
+
 def _basemap(sources, layers):
     # The MapLibre renderer always shows Carto Positron: it renders in EPSG:3857,
     # where the CDN tiles are aligned and far faster than any municipal WMS.
@@ -153,9 +190,7 @@ def compile_style(conn, view):
 
         visible = entry["visible"] if isinstance(entry.get("visible"), bool) else meta["visible"]
         label = entry.get("label") or meta["label"] or table
-        popup_attrs = entry["popup"] if "popup" in entry else meta["popup"]
-        if not isinstance(popup_attrs, list):
-            popup_attrs = []
+        popup_attrs = resolve_popup_attrs(entry, meta, cols)
 
         gclass = dbq.geometry_class(conn, schema, table)
         count = dbq.feature_count(conn, schema, table)

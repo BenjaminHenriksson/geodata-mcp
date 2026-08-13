@@ -238,7 +238,8 @@ def style_json(view_id: str, request: Request):
         # The compiled style depends on app.layer_meta as well as the view row, so the
         # fingerprint must cover both — otherwise `layer(op='style')` changes never reach
         # an open page, which polls with If-None-Match and would keep getting 304.
-        etag = f'W/"{view["version"]}-{dbq.layer_meta_fingerprint(conn, view["spec"])}"'
+        etag = (f'W/"{view["version"]}-{dbq.layer_meta_fingerprint(conn, view["spec"])}'
+                f'-{compile_maplibre.CODE_VERSION}"')
         if _etag_matches(request.headers.get("if-none-match"), etag):
             return Response(status_code=304, headers={"ETag": etag})
         style = compile_maplibre.compile_style(conn, view)
