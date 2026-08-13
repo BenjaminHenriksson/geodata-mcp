@@ -78,6 +78,83 @@ def _normalize_layers(layers, ws: str) -> tuple[list[dict] | None, str | None, l
     return out, None, warnings
 
 
+_YEAR_RE = re.compile(r"(\d{4})")
+
+
+def _is_change_layer(conn, schema: str, table: str) -> bool:
+    """A change_detect output is any table carrying the diff signature columns.
+    Detected by shape (not provenance) so a renamed/derived copy still qualifies."""
+    row = conn.execute(
+        """SELECT count(*) FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s
+              AND column_name IN ('vintage_a', 'vintage_b', 'change_class')""",
+        (schema, table),
+    ).fetchone()
+    return row is not None and int(row[0]) == 3
+
+
+def _vintage_dataset(conn, external_id: str):
+    """(dataset_uuid, title) for a WMS/raster vintage external_id, or None when it is
+    not a mappable raster layer (e.g. a STAC vintage, or one never harvested)."""
+    if not external_id:
+        return None
+    return conn.execute(
+        "SELECT id::text, title FROM catalog.datasets "
+        " WHERE external_id = %s AND kind = 'raster_ref' LIMIT 1",
+        (external_id,),
+    ).fetchone()
+
+
+def _augment_change_layers(clean_layers: list[dict]) -> tuple[list[dict], dict | None, list[str]]:
+    """Inject the before/after orthophoto vintages behind any change-detection layer,
+    so the imagery a diff was computed from is inspectable in the viewer without the
+    user hunting dataset UUIDs. Returns (layers, compare, warnings). The imagery is
+    added hidden (the viewer's inspector reveals it); `compare` drives that inspector."""
+    warnings: list[str] = []
+    compare: dict | None = None
+    have = {l["ref"] for l in clean_layers}
+    out: list[dict] = []
+    with db.app_pool().connection() as conn:
+        for entry in clean_layers:
+            ref = entry["ref"]
+            if ref.startswith("wms:") or "." not in ref:
+                out.append(entry)
+                continue
+            schema, table = ref.split(".", 1)
+            if not _is_change_layer(conn, schema, table):
+                out.append(entry)
+                continue
+            row = conn.execute(
+                pgsql.SQL("SELECT vintage_a, vintage_b FROM {} LIMIT 1").format(
+                    sqlguard.qualified(schema, table))
+            ).fetchone()
+            va, vb = (row or (None, None))
+            sides: dict[str, dict] = {}
+            for side, ext in (("before", va), ("after", vb)):
+                ds = _vintage_dataset(conn, ext)
+                if ds is None:
+                    if ext:
+                        warnings.append(
+                            f"{ref}: {side} vintage {ext!r} is not a mappable raster "
+                            "layer — its imagery cannot be shown")
+                    continue
+                wref = f"wms:{ds[0]}"
+                year = _YEAR_RE.search(ext)
+                yr = year.group(1) if year else None
+                label = f"Ortofoto {yr}" if yr else (ds[1] or ext)
+                sides[side] = {"ref": wref, "label": label, "year": yr}
+                if wref not in have:
+                    # Hidden by default; placed before the change layer so the diff
+                    # polygons paint on top of the imagery in both renderers.
+                    out.append({"ref": wref, "label": label, "visible": False,
+                                "role": f"orthophoto-{side}"})
+                    have.add(wref)
+            out.append({**entry, "role": "change"})
+            if compare is None and sides:
+                compare = {"changes_ref": ref, **sides}
+    return out, compare, warnings
+
+
 def _auto_extent(layer_refs: list[str]) -> list[float] | None:
     """Union of ST_Extent over the vector layers, expanded 5%."""
     boxes = []
@@ -119,6 +196,8 @@ def upsert(workspace_id: str, view_id: str | None, title: str | None, layers,
     clean_layers, err, warnings = _normalize_layers(layers, ws)
     if err:
         return {"error": err}
+    clean_layers, compare, aug_warnings = _augment_change_layers(clean_layers)
+    warnings = warnings + aug_warnings
 
     if extent_3014 is not None:
         try:
@@ -143,6 +222,8 @@ def upsert(workspace_id: str, view_id: str | None, title: str | None, layers,
         "layers": clean_layers,
         "legend": bool(legend),
     }
+    if compare:
+        spec["compare"] = compare
     with db.app_pool().connection() as conn:
         # The DO UPDATE is owner-scoped: a view_id belonging to another workspace must not be
         # silently rewritten under the user watching it (view ids travel as shareable URLs).

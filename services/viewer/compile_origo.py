@@ -289,6 +289,10 @@ def compile_origo(conn, view):
                      "map's resolution ladder: " + ", ".join(_text(t) for t in wmts_skipped)
                      + ". They render in the MapLibre view.")
         note = f"{note} {skip_note}" if note else skip_note
+    if spec.get("compare"):
+        cmp_note = ("Ortofoto-lager (före/efter) ligger bakom förändringslagret — "
+                    "bocka i dem i teckenförklaringen för att inspektera flygbilderna.")
+        note = f"{note} {cmp_note}" if note else cmp_note
     if note:
         config["geodata"]["note"] = note
     return config

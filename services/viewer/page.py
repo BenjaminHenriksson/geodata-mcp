@@ -13,11 +13,40 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
   html, body { height: 100%; margin: 0; }
   #map { position: absolute; inset: 0; }
   #titlebar {
-    position: absolute; top: 10px; left: 10px; z-index: 10; display: none;
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    z-index: 10; display: none;
     background: rgba(255,255,255,.92); padding: 6px 12px; border-radius: 4px;
     font: 600 14px/1.4 system-ui, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,.25);
-    max-width: 60%;
+    max-width: 60%; text-align: center;
   }
+  #inspector {
+    position: absolute; top: 10px; left: 10px; z-index: 11; display: none;
+    background: rgba(255,255,255,.95); padding: 9px 11px; border-radius: 6px;
+    font: 12px/1.4 system-ui, sans-serif; color: #222;
+    box-shadow: 0 1px 6px rgba(0,0,0,.28); width: 210px;
+  }
+  #inspector .hdr { font-weight: 600; font-size: 12px; margin-bottom: 7px;
+    letter-spacing: .02em; }
+  #inspector .seg { display: flex; border: 1px solid #cdcdcd; border-radius: 5px;
+    overflow: hidden; }
+  #inspector .seg button { flex: 1 1 0; min-width: 0; border: 0; background: #fff;
+    padding: 6px 4px; font: 600 11px system-ui, sans-serif; color: #333; cursor: pointer;
+    border-right: 1px solid #e4e4e4; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  #inspector .seg button:last-child { border-right: 0; }
+  #inspector .seg button.on { background: #1f78b4; color: #fff; }
+  #inspector .seg button:not(.on):hover { background: #eef4f8; }
+  #inspector .row { display: flex; align-items: center; gap: 7px; margin-top: 9px; }
+  #inspector .row.disabled { opacity: .4; pointer-events: none; }
+  #inspector .row label { color: #555; flex: none; }
+  #inspector input[type=range] { flex: 1; accent-color: #1f78b4; }
+  #inspector .chk { display: flex; align-items: center; gap: 7px; margin-top: 9px;
+    cursor: pointer; }
+  #inspector .chk .sw { width: 12px; height: 12px; border: 2px solid #333;
+    background: rgba(31,120,180,.35); flex: none; box-sizing: border-box; }
+  #inspector .tip { color: #888; font-size: 10.5px; margin-top: 8px; line-height: 1.35; }
+  #inspector kbd { font: 10px ui-monospace, monospace; background: #f0f0f0;
+    border: 1px solid #d0d0d0; border-radius: 3px; padding: 0 3px; }
   #legend {
     position: absolute; bottom: 24px; left: 10px; z-index: 10; display: none;
     background: rgba(255,255,255,.92); padding: 8px 12px; border-radius: 4px;
@@ -49,6 +78,7 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
 <body>
 <div id="map"></div>
 <div id="titlebar"></div>
+<div id="inspector"></div>
 <div id="legend"></div>
 <div id="error"></div>
 <a id="renderer-toggle" href="/v/__VIEW_ID__?renderer=origo" title="Render this view with Origo (OpenLayers)">⇄ Origo</a>
@@ -65,6 +95,10 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
   var currentExtent = null;
   var popups = {};
   var fetching = false;
+  var compareMeta = null;       // md.compare: before/after imagery + change layer ids
+  var imageryMode = "map";      // "map" | "before" | "after"
+  var imageryOpacity = 1;
+  var changesOn = true;
 
   function escapeHtml(v) {
     return String(v)
@@ -117,6 +151,127 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
     el.style.display = "block";
   }
 
+  // ---- imagery inspector (only present on change-detection maps) ----------
+  function setImageryMode(mode) {
+    imageryMode = mode;
+    applyImagery();
+    updateInspectorUI();
+  }
+
+  function applyImagery() {
+    if (!map || !compareMeta) { return; }
+    [["before", compareMeta.before], ["after", compareMeta.after]].forEach(function (p) {
+      var key = p[0], info = p[1];
+      if (!info || !map.getLayer(info.id)) { return; }
+      var visible = (imageryMode === key);
+      try {
+        map.setLayoutProperty(info.id, "visibility", visible ? "visible" : "none");
+        if (visible) { map.setPaintProperty(info.id, "raster-opacity", imageryOpacity); }
+      } catch (e) { /* layer not ready yet; reapplied on next style load */ }
+    });
+  }
+
+  function applyChanges() {
+    if (!map || !compareMeta || !compareMeta.change_layer_ids) { return; }
+    compareMeta.change_layer_ids.forEach(function (id) {
+      if (!map.getLayer(id)) { return; }
+      try { map.setLayoutProperty(id, "visibility", changesOn ? "visible" : "none"); }
+      catch (e) { /* not ready */ }
+    });
+  }
+
+  function applyInspectorState() { applyImagery(); applyChanges(); }
+
+  function updateInspectorUI() {
+    if (!compareMeta) { return; }
+    var btns = compareMeta._segButtons || {};
+    Object.keys(btns).forEach(function (k) { btns[k].classList.toggle("on", k === imageryMode); });
+    if (compareMeta._opacityRow) {
+      var active = (imageryMode === "before" || imageryMode === "after");
+      compareMeta._opacityRow.classList.toggle("disabled", !active);
+    }
+  }
+
+  function segButton(label, title, onClick) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.title = title || label;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function buildInspector(compare) {
+    var el = document.getElementById("inspector");
+    compareMeta = (compare && (compare.before || compare.after)) ? compare : null;
+    if (!compareMeta) { el.style.display = "none"; return; }
+    el.innerHTML = "";
+
+    var hdr = document.createElement("div");
+    hdr.className = "hdr";
+    hdr.textContent = "Orthophoto";
+    el.appendChild(hdr);
+
+    var seg = document.createElement("div");
+    seg.className = "seg";
+    var segButtons = {};
+    var mapBtn = segButton("Map", "Base map", function () { setImageryMode("map"); });
+    seg.appendChild(mapBtn); segButtons.map = mapBtn;
+    ["before", "after"].forEach(function (side) {
+      var info = compareMeta[side];
+      if (!info) { return; }
+      var short = info.year || info.label || side;
+      var b = segButton(short, info.label || side, function () { setImageryMode(side); });
+      seg.appendChild(b); segButtons[side] = b;
+    });
+    el.appendChild(seg);
+    compareMeta._segButtons = segButtons;
+
+    var row = document.createElement("div");
+    row.className = "row";
+    var lab = document.createElement("label");
+    lab.textContent = "Opacity";
+    var rng = document.createElement("input");
+    rng.type = "range"; rng.min = "20"; rng.max = "100"; rng.step = "5";
+    rng.value = String(Math.round(imageryOpacity * 100));
+    rng.addEventListener("input", function () {
+      imageryOpacity = (+rng.value) / 100; applyImagery();
+    });
+    row.appendChild(lab); row.appendChild(rng);
+    el.appendChild(row);
+    compareMeta._opacityRow = row;
+
+    if (compareMeta.change_layer_ids && compareMeta.change_layer_ids.length) {
+      var chk = document.createElement("label");
+      chk.className = "chk";
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = changesOn;
+      cb.addEventListener("change", function () { changesOn = cb.checked; applyChanges(); });
+      var sw = document.createElement("span"); sw.className = "sw";
+      var t = document.createElement("span"); t.textContent = "Change candidates";
+      chk.appendChild(cb); chk.appendChild(sw); chk.appendChild(t);
+      el.appendChild(chk);
+    }
+
+    if (compareMeta.before && compareMeta.after) {
+      var tip = document.createElement("div");
+      tip.className = "tip";
+      tip.innerHTML = "Press <kbd>Space</kbd> to blink before ↔ after.";
+      el.appendChild(tip);
+    }
+
+    el.style.display = "block";
+    updateInspectorUI();
+  }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.code !== "Space" || !compareMeta || !compareMeta.before || !compareMeta.after) { return; }
+    var tag = (e.target && e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea") { return; }
+    e.preventDefault();
+    setImageryMode(imageryMode === "before" ? "after" : "before");
+  });
+
   function applyMetadata(md) {
     md = md || {};
     popups = md.popups || {};
@@ -129,6 +284,7 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
       bar.style.display = "none";
     }
     renderLegend(md.legend || []);
+    buildInspector(md.compare);
   }
 
   function popupLayerIds() {
@@ -183,6 +339,7 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
         var md = style.metadata || {};
         map.setStyle(style, { diff: true });
         applyMetadata(md);
+        applyInspectorState();  // diff:true reverts layout/paint to style defaults
         var newExtent = md.extent_4326 || null;
         if (newExtent && !extentsEqual(newExtent, currentExtent)) {
           currentExtent = newExtent;
@@ -209,6 +366,7 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
     fitExtent(currentExtent);
     map.on("click", onMapClick);
     map.on("mousemove", onMouseMove);
+    map.on("load", applyInspectorState);  // reapply selection once layers exist
     applyMetadata(md);
     setInterval(poll, POLL_MS);
   }

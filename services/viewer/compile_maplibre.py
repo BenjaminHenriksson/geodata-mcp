@@ -117,6 +117,25 @@ def resolve_popup_attrs(entry, meta, cols):
     return dbq.non_geom_columns(cols)
 
 
+def _compare_metadata(compare, layer_ids_by_ref):
+    """Resolve a spec['compare'] block (ref-based, from map_ops) into the layer ids the
+    viewer's imagery inspector toggles. Returns None when neither vintage rendered (e.g.
+    the imagery was not in the catalog), so the inspector simply does not appear."""
+    if not isinstance(compare, dict):
+        return None
+    out = {}
+    for side in ("before", "after"):
+        info = compare.get(side)
+        if isinstance(info, dict) and info.get("ref") in layer_ids_by_ref:
+            out[side] = {"id": layer_ids_by_ref[info["ref"]][0],
+                         "label": info.get("label") or side,
+                         "year": info.get("year")}
+    cref = compare.get("changes_ref")
+    if cref in layer_ids_by_ref:
+        out["change_layer_ids"] = layer_ids_by_ref[cref]
+    return out if (out.get("before") or out.get("after")) else None
+
+
 def _basemap(sources, layers):
     # The MapLibre renderer always shows Carto Positron: it renders in EPSG:3857,
     # where the CDN tiles are aligned and far faster than any municipal WMS.
@@ -139,6 +158,7 @@ def compile_style(conn, view):
     layers = []
     legend = []
     popups = {}
+    layer_ids_by_ref = {}  # spec ref -> [maplibre layer ids], for the compare inspector
 
     _basemap(sources, layers)
 
@@ -172,6 +192,7 @@ def compile_style(conn, view):
             if entry.get("visible") is False:
                 layer["layout"] = {"visibility": "none"}
             layers.append(layer)
+            layer_ids_by_ref[ref] = [sid]
             continue
 
         parsed = dbq.split_layer_ref(ref)
@@ -248,6 +269,9 @@ def compile_style(conn, view):
             primary_id = f"{ref}__circle"
             legend_fill, legend_stroke = fill, "#ffffff"
 
+        layer_ids_by_ref[ref] = [lyr["id"] for lyr in layers
+                                 if lyr.get("source") == ref]
+
         if popup_attrs:
             popups[primary_id] = [str(a) for a in popup_attrs]
         if visible:
@@ -263,6 +287,10 @@ def compile_style(conn, view):
                 "extent_4326": extent_4326,
                 "legend": legend if spec.get("legend", True) else [],
                 "popups": popups}
+
+    compare = _compare_metadata(spec.get("compare"), layer_ids_by_ref)
+    if compare:
+        metadata["compare"] = compare
 
     return {"version": 8,
             "name": title or view_id,
