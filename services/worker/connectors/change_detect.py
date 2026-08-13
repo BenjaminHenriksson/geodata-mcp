@@ -1,8 +1,10 @@
-"""SAM3 orthophoto change detection (change_detect): STAC item search over two
-vintages, windowed /vsicurl reads of the COGs, per-window segmentation via the
+"""SAM3 orthophoto change detection (change_detect): two vintage sources —
+STAC collections (item search + windowed /vsicurl reads of the COGs) or WMS
+orthophoto vintage layers (per-window GetMap, e.g. the Lantmäteriet vintages
+cascaded publicly by karta.sundsvall.se) — per-window segmentation via the
 standalone segmenter service (services/segmenter, HTTP), mask polygonization
 and a PostGIS diff into a workspace layer of change candidates plus a per-tile
-coverage table.
+coverage table. STAC and WMS vintages can be mixed within one run.
 
 Masks travel as PNG bytes end to end — no numpy, no gdal_array (the numpy-2 /
 GDAL-3.8.5 ABI combination in the worker image is unverified).
@@ -94,13 +96,21 @@ def _area_bboxes(conn, area_wkt: str):
             (row["lon1"], row["lat1"], row["lon2"], row["lat2"]))
 
 
-def _stac_root(conn, collection_id: str) -> str:
+def _collection_source(conn, collection_id: str) -> dict:
+    """{kind, url, extent_3006} for a STAC collection or WMS vintage layer.
+    extent_3006 is the dataset's advertised bbox as (x1, y1, x2, y2), or None."""
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT s.url FROM catalog.datasets d
+            SELECT s.kind, s.url,
+                   ST_XMin(e) AS x1, ST_YMin(e) AS y1,
+                   ST_XMax(e) AS x2, ST_YMax(e) AS y2
+              FROM catalog.datasets d
               JOIN catalog.sources s ON s.id = d.source_id
-             WHERE d.external_id = %s AND s.kind = 'stac'
+              LEFT JOIN LATERAL (
+                   SELECT ST_Transform(d.extent_3014, 3006) AS e
+                    WHERE d.extent_3014 IS NOT NULL) t ON true
+             WHERE d.external_id = %s AND s.kind IN ('stac', 'wms')
              LIMIT 1
             """,
             (collection_id,),
@@ -108,8 +118,12 @@ def _stac_root(conn, collection_id: str) -> str:
         row = cur.fetchone()
     if row is None or not row["url"]:
         raise RuntimeError(
-            f"collection {collection_id} not in catalog.datasets (source kind 'stac')")
-    return row["url"].rstrip("/")
+            f"collection {collection_id} not in catalog.datasets "
+            "(source kind 'stac' or 'wms')")
+    extent = None
+    if row["x1"] is not None:
+        extent = (row["x1"], row["y1"], row["x2"], row["y2"])
+    return {"kind": row["kind"], "url": row["url"].rstrip("/"), "extent_3006": extent}
 
 
 def _stac_items(root: str, collection_id: str, bbox_4326) -> list:
@@ -151,6 +165,16 @@ def _stac_items(root: str, collection_id: str, bbox_4326) -> list:
     if not items:
         raise RuntimeError(f"collection {collection_id} has no rgb imagery over the area")
     return items
+
+
+def _wms_items(collection_id: str, source: dict, gsd: float, bbox6) -> list:
+    """One synthetic item per WMS vintage layer: the whole layer, read window
+    by window via GetMap. proj_bbox falls back to the area bbox when the
+    catalog has no advertised extent (treat as covering; empty tiles surface
+    as 'missing' via the empty-PNG check)."""
+    return [{"id": collection_id, "href": None, "datetime": None,
+             "gsd": float(gsd),
+             "proj_bbox": [float(v) for v in (source["extent_3006"] or bbox6)]}]
 
 
 def _parse_dt(s):
@@ -280,6 +304,61 @@ def _window_png(vrt, w: dict, path: str):
     return data
 
 
+def _wms_tile_empty(data: bytes) -> bool:
+    """True when a GetMap PNG carries no usable imagery. The byte-size floor
+    that works for GDAL's RGB output is useless here — GeoServer encodes a
+    fully-transparent tile as a ~20 KB white-under-transparent RGBA PNG — so
+    decode and test content: no opaque pixels (alpha maxes at 0), or a single
+    flat colour over the whole 1008 px window (a real orthophoto never is)."""
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+    except Exception:
+        return True
+    if "A" in img.getbands():
+        alpha = img.getchannel("A")
+        if alpha.getextrema()[1] == 0:
+            return True
+    rgb = img.convert("RGB")
+    return all(lo == hi for lo, hi in rgb.getextrema())
+
+
+def _window_png_wms(client: httpx.Client, wms_url: str, layer: str, w: dict,
+                    auth) -> object:
+    """1008x1008 PNG bytes for the window via WMS 1.3.0 GetMap (EPSG:3006 →
+    axis order northing,easting). None for empty imagery (no-coverage tile),
+    _READ_ERROR on a failed request. One retry: cascaded municipal GeoServers
+    hiccup on upstream fetches."""
+    params = {
+        "service": "WMS", "version": "1.3.0", "request": "GetMap",
+        "layers": layer, "styles": "", "crs": "EPSG:3006",
+        "bbox": f"{w['lry']},{w['ulx']},{w['uly']},{w['lrx']}",
+        "width": str(TILE_PX), "height": str(TILE_PX),
+        "format": "image/png", "transparent": "true",
+    }
+    data = None
+    for attempt in (1, 2):
+        try:
+            resp = client.get(wms_url, params=params, auth=auth,
+                              timeout=HTTP_TIMEOUT)
+            resp.raise_for_status()
+            if not resp.headers.get("content-type", "").startswith("image/"):
+                # GeoServer reports errors as XML with HTTP 200. Log only the
+                # status/reason, never the body — a redirected response body
+                # could carry internal content.
+                raise RuntimeError(f"non-image response ({resp.status_code} "
+                                   f"{resp.headers.get('content-type', '?')})")
+            data = resp.content
+            break
+        except Exception as exc:
+            if attempt == 2:
+                log.warning("WMS window %s read failed: %s", w["tile_id"], exc)
+                return _READ_ERROR
+    if data is None or _wms_tile_empty(data):
+        return None
+    return data
+
+
 def _mask_polygons(mask_b64: str, w: dict, srs_wkt: str) -> list:
     """Segmenter mask PNG → list of WKB polygons in EPSG:3006, via a
     georeferenced MEM raster and gdal.Polygonize."""
@@ -312,12 +391,15 @@ def _mask_polygons(mask_b64: str, w: dict, srs_wkt: str) -> list:
     return out
 
 
-def _infer(sam3_url: str, windows: list, items_by_tag: dict, concepts: list,
-           threshold: float, statuses: dict, prefix: str):
-    """Per-window inference over both vintages. Mutates statuses; returns
-    (detection rows for the temp table, model info from the segmenter)."""
+def _infer(sam3_url: str, windows: list, items_by_tag: dict, sources_by_tag: dict,
+           concepts: list, threshold: float, statuses: dict, prefix: str):
+    """Per-window inference over both vintages (STAC → VRT windowed reads,
+    WMS → per-window GetMap). Mutates statuses; returns (detection rows for
+    the temp table, model info from the segmenter)."""
     cred = None
-    for items in items_by_tag.values():
+    for tag, items in items_by_tag.items():
+        if sources_by_tag[tag]["kind"] != "stac":
+            continue
         for it in items:
             cred = netauth.userpwd_for(it["href"])
             if cred:
@@ -341,6 +423,8 @@ def _infer(sam3_url: str, windows: list, items_by_tag: dict, concepts: list,
         gdal.SetConfigOption("GDAL_HTTP_USERPWD", cred)
     try:
         for tag, items in items_by_tag.items():
+            if sources_by_tag[tag]["kind"] != "stac":
+                continue
             path = f"{prefix}_{tag}.vrt"
             # bandList collapses RGBI to RGB; RGB-only eras pass through.
             vrt = gdal.BuildVRT(path, ["/vsicurl/" + i["href"] for i in items],
@@ -350,14 +434,32 @@ def _infer(sam3_url: str, windows: list, items_by_tag: dict, concepts: list,
             vrts[tag] = vrt
             vrt_paths.append(path)
 
-        with httpx.Client(timeout=httpx.Timeout(SEGMENT_TIMEOUT)) as client:
+        wms_auth = {}
+        for tag, src in sources_by_tag.items():
+            if src["kind"] == "wms":
+                userpwd = netauth.userpwd_for(src["url"])
+                wms_auth[tag] = tuple(userpwd.split(":", 1)) if userpwd else None
+
+        # follow_redirects stays OFF: a WMS source URL comes from the catalog,
+        # which any authenticated principal can register, and a redirect would
+        # let it steer the worker's GetMap at internal hosts (SSRF). GeoServer
+        # GetMap answers directly, so no legitimate redirect is lost.
+        with httpx.Client(timeout=httpx.Timeout(SEGMENT_TIMEOUT)) as client, \
+                httpx.Client(timeout=httpx.Timeout(HTTP_TIMEOUT),
+                             follow_redirects=False) as wms_client:
             for w in windows:
                 if statuses[w["tile_id"]] is not None:
                     continue
                 pngs = {}
                 for tag in ("a", "b"):
-                    png = _window_png(vrts[tag], w,
-                                      f"{prefix}_{w['tile_id']}_{tag}.png")
+                    src = sources_by_tag[tag]
+                    if src["kind"] == "wms":
+                        png = _window_png_wms(wms_client, src["url"],
+                                              items_by_tag[tag][0]["id"], w,
+                                              wms_auth.get(tag))
+                    else:
+                        png = _window_png(vrts[tag], w,
+                                          f"{prefix}_{w['tile_id']}_{tag}.png")
                     if png is _READ_ERROR:
                         statuses[w["tile_id"]] = "error"
                         break
@@ -619,12 +721,19 @@ def change_detect(conn, job) -> dict:
     conn.commit()
 
     bbox6, bbox4 = _area_bboxes(conn, area_wkt)
-    root_a = _stac_root(conn, collection_a)
-    root_b = _stac_root(conn, collection_b)
+    src_a = _collection_source(conn, collection_a)
+    src_b = _collection_source(conn, collection_b)
     conn.commit()
 
-    items_a = _stac_items(root_a, collection_a, bbox4)
-    items_b = _stac_items(root_b, collection_b, bbox4)
+    wms_gsd = float(payload.get("gsd") or 0.25)
+    if src_a["kind"] == "stac":
+        items_a = _stac_items(src_a["url"], collection_a, bbox4)
+    else:
+        items_a = _wms_items(collection_a, src_a, wms_gsd, bbox6)
+    if src_b["kind"] == "stac":
+        items_b = _stac_items(src_b["url"], collection_b, bbox4)
+    else:
+        items_b = _wms_items(collection_b, src_b, wms_gsd, bbox6)
     meta_a = _vintage_meta(collection_a, items_a)
     meta_b = _vintage_meta(collection_b, items_b)
     proc_gsd = max(meta_a["gsd"], meta_b["gsd"])
@@ -651,11 +760,26 @@ def change_detect(conn, job) -> dict:
             statuses[w["tile_id"]] = None
 
     det_rows, model_info = _infer(sam3_url, windows, {"a": items_a, "b": items_b},
+                                  {"a": src_a, "b": src_b},
                                   concepts, threshold, statuses,
                                   f"/vsimem/chg_{job['id']}")
     for tid, status in statuses.items():
         if status is None:
             statuses[tid] = "error"
+
+    # A WMS vintage that errors on every window it should have covered is a
+    # persistent misconfiguration (revoked auth, renamed layer, dead upstream)
+    # masquerading as a clean run: without this guard the job ends 'done' with
+    # an empty diff. The STAC path already fails hard (BuildVRT / _stac_items),
+    # so only guard the WMS case, and only when nothing analyzed.
+    if "wms" in (src_a["kind"], src_b["kind"]):
+        analyzed = sum(1 for s in statuses.values() if s == "analyzed")
+        errored = sum(1 for s in statuses.values() if s == "error")
+        if analyzed == 0 and errored:
+            raise RuntimeError(
+                f"every WMS window failed ({errored} errors, 0 analyzed) — the "
+                "orthophoto layer is unreachable, renamed, or auth-refused; "
+                "re-harvest the source and check the layer name")
 
     tile_counts = {}
     for status in statuses.values():
@@ -666,6 +790,8 @@ def change_detect(conn, job) -> dict:
 
     details = {
         "collections": {"a": collection_a, "b": collection_b},
+        "source_kinds": {"a": src_a["kind"], "b": src_b["kind"]},
+        "wms_gsd": wms_gsd if "wms" in (src_a["kind"], src_b["kind"]) else None,
         "items": {"a": [{"id": i["id"], "datetime": i["datetime"]} for i in items_a],
                   "b": [{"id": i["id"], "datetime": i["datetime"]} for i in items_b]},
         "concepts": concepts,

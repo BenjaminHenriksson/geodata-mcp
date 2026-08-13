@@ -237,7 +237,8 @@ def _resolve_area_wkt(conn, area: str) -> tuple[str | None, str | None]:
 def change_detect(workspace_id: str, area: str | None, concepts: list | None,
                   collection_a: str | None, collection_b: str | None,
                   table_name: str | None, threshold: float | None,
-                  min_area_m2: float | None, method: str | None) -> dict:
+                  min_area_m2: float | None, method: str | None,
+                  gsd: float | None = None) -> dict:
     """Validate and enqueue a SAM3 orthophoto change-detection job (worker does the rest)."""
     if not isinstance(concepts, list) or not 1 <= len(concepts) <= 6:
         return {"error": "concepts must be a list of 1-6 noun phrases, "
@@ -247,7 +248,7 @@ def change_detect(workspace_id: str, area: str | None, concepts: list | None,
         return {"error": "each concept must be 1-80 characters after trimming"}
     if not collection_a or not collection_b:
         return {"error": "collection_a and collection_b are required — query catalog.datasets "
-                         "(source kind 'stac') to list orthophoto collections"}
+                         "(source kind 'stac' or 'wms') to list orthophoto collections/layers"}
     if collection_a == collection_b:
         return {"error": "collection_a and collection_b must be different vintages"}
     if not area or not isinstance(area, str):
@@ -279,19 +280,30 @@ def change_detect(workspace_id: str, area: str | None, concepts: list | None,
     if method != "mask_compare":
         return {"error": f"method {method!r} not implemented — 'mask_compare' is the only "
                          "method today (raster_diff and dsm_diff are documented future methods)"}
+    proc_gsd = None
+    if gsd is not None:
+        try:
+            proc_gsd = float(gsd)
+        except (TypeError, ValueError):
+            return {"error": "gsd must be a number (metres per pixel)"}
+        if not 0.05 <= proc_gsd <= 2.0:
+            return {"error": f"gsd {proc_gsd} out of bounds — use 0.05..2.0 m/px "
+                             "(only applies to WMS vintages; STAC items carry their own)"}
 
     ws = sessions.ws_schema_for(workspace_id)
     with db.app_pool().connection() as conn:
         for cid in (collection_a, collection_b):
             row = conn.execute(
-                """SELECT 1 FROM catalog.datasets d
-                     JOIN catalog.sources s ON s.id = d.source_id AND s.kind = 'stac'
+                """SELECT s.kind FROM catalog.datasets d
+                     JOIN catalog.sources s ON s.id = d.source_id
+                          AND s.kind IN ('stac', 'wms')
                     WHERE d.external_id = %s""",
                 (cid,),
             ).fetchone()
             if row is None:
                 return {"error": f"unknown collection {cid!r} — query catalog.datasets "
-                                 "(source kind 'stac') to list orthophoto collections"}
+                                 "(source kind 'stac' for STAC collections, 'wms' for "
+                                 "orthophoto vintage layers)"}
         for t in (table_name, f"{table_name}_coverage"):
             exists = conn.execute("SELECT to_regclass(%s)", (f"{ws}.{t}",)).fetchone()
             if exists and exists[0] is not None:
@@ -317,7 +329,8 @@ def change_detect(workspace_id: str, area: str | None, concepts: list | None,
     payload = {"area_wkt_3014": area_wkt, "table_name": table_name,
                "target_schema": target_schema, "concepts": clean_concepts,
                "collection_a": collection_a, "collection_b": collection_b,
-               "threshold": thr, "min_area_m2": min_area, "method": method}
+               "threshold": thr, "min_area_m2": min_area, "method": method,
+               "gsd": proc_gsd}
     job_id = db.enqueue_job("change_detect", payload, workspace_id)
     job = db.wait_for_job(job_id, timeout_s=8.0)
     reply = {"job_id": job_id, "kind": "change_detect",

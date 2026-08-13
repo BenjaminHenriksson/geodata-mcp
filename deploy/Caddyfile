@@ -3,6 +3,8 @@
 		reverse_proxy mcp:8000 {
 			lb_try_duration 10s
 			lb_try_interval 500ms
+			# MCP streamable-HTTP responses must not be buffered
+			flush_interval -1
 		}
 	}
 	handle {

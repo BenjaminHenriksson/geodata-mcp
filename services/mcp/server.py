@@ -147,7 +147,8 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
          area: str | None = None, concepts: list | None = None,
          collection_a: str | None = None, collection_b: str | None = None,
          threshold: float | None = None, min_area_m2: float | None = None,
-         method: str | None = None, job_id: int | None = None, ctx: Context = None) -> dict:
+         method: str | None = None, gsd: float | None = None,
+         job_id: int | None = None, ctx: Context = None) -> dict:
     """Register data sources and bring datasets into the database. Ops:
 
     - op='register' {kind, url, title, slug?, license?, notes?}: add a source to the catalog.
@@ -167,7 +168,7 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
       MANDATORY — say where the data comes from; it is recorded in provenance.
       Column types are inferred (text / double precision / bigint / boolean).
     - op='change_detect' {area, concepts, collection_a, collection_b, table_name,
-      threshold?, min_area_m2?, method?}: compare two orthophoto vintages with SAM3
+      threshold?, min_area_m2?, method?, gsd?}: compare two orthophoto vintages with SAM3
       concept segmentation and write where concepts appeared/disappeared/changed to your
       workspace. Results are change CANDIDATES for review, not conclusions — inspect them
       against the imagery before reporting anything. concepts: 1-6 free-text noun phrases,
@@ -175,9 +176,17 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
       'byggnad' finds nothing where 'building' scores 0.8+). Translate user terms first,
       e.g. byggnad→'building', småhus→'house', upplag→'storage yard', pool→'swimming pool',
       parkeringsplats→'parking lot'.
-      collection_a/collection_b: STAC orthophoto collection ids — list them via the query
-      tool: SELECT d.external_id FROM catalog.datasets d JOIN catalog.sources s
-      ON s.id = d.source_id AND s.kind = 'stac' (e.g. external_id LIKE 'orto-t2-%').
+      collection_a/collection_b: either STAC orthophoto collection ids (source kind
+      'stac', e.g. external_id LIKE 'orto-t2-%') or WMS orthophoto vintage layers
+      (source kind 'wms', e.g. 'Lantmateriet:Orto2010_wms',
+      'Lantmateriet:HistoriskaOrtofoton1975_wms' from the Sundsvall GeoServer — free,
+      no Lantmäteriet account needed). List them via the query tool:
+      SELECT d.external_id, s.kind FROM catalog.datasets d JOIN catalog.sources s
+      ON s.id = d.source_id AND s.kind IN ('stac','wms') WHERE d.external_id ~* 'orto'.
+      STAC and WMS vintages can be mixed in one run. gsd (optional, default 0.25 m/px)
+      sets the processing resolution for WMS vintages; STAC items carry their own.
+      WMS vintages have no capture-date metadata — the vintage year comes from the
+      layer name, so cross-season false positives cannot be warned about.
       area: a layer ref ('ref.<t>' or '<your ws schema>.<t>' — its bounding box is used),
       'xmin,ymin,xmax,ymax' in EPSG:3014, or EPSG:3014 WKT; max 2 km² per run. Writes
       <ws>.<table_name> (concept, change_class 'appeared'|'disappeared'|'changed',
@@ -210,7 +219,7 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
             return load_ops.inline(w.id, rows or [], table_name or "", source, crs)
         if op == "change_detect":
             return load_ops.change_detect(w.id, area, concepts, collection_a, collection_b,
-                                          table_name, threshold, min_area_m2, method)
+                                          table_name, threshold, min_area_m2, method, gsd)
         if op == "status":
             if job_id is None:
                 return {"error": "status needs job_id"}

@@ -31,7 +31,10 @@ services:
                -c max_connections=120
                -c shared_buffers=512MB
     ports:
-      - "5433:5432"
+      # Host-only: the app services reach postgres over the compose network.
+      # Publishing on 0.0.0.0 would put the DB one firewall-rule away from the
+      # internet (docker's iptables bypasses ufw).
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
@@ -49,8 +52,11 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in .env}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      # Host-only: Caddy proxies /exports/* to 127.0.0.1:9000 on the host, and
+      # the app services use the compose-internal minio:9000. The console
+      # (9001) is host-only too — reach it over the tailnet/SSH tunnel.
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
     healthcheck:
