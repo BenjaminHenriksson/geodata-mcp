@@ -31,4 +31,8 @@ RUN mkdir -p /app/static/origo \
 COPY main.py compile_maplibre.py compile_origo.py dbq.py netauth.py page.py viewer_auth.py /app/
 
 EXPOSE 8001
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
+# Multiple workers: style.json does a DB read + embeds the layer's GeoJSON, which
+# briefly blocks its worker; a single worker 503s the concurrent asset/style
+# requests a cold page load fires, leaving the map blank until reload. The
+# viewer is stateless per request, so workers scale safely.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "3"]
