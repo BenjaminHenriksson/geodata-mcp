@@ -96,6 +96,26 @@ CREATE TABLE app.workspaces (
 );
 CREATE UNIQUE INDEX workspaces_one_active_idx ON app.workspaces (api_key_id) WHERE is_active;
 
+-- OAuth 2.1 + PKCE authorization-server state (services/mcp/oauth.py). Registered
+-- clients and issued access/refresh tokens for the invite-code browser-login flow;
+-- each authorization's `subject` maps to its own app.api_keys principal (and thus its
+-- own workspaces). See db/migrations/004_oauth.sql for the same DDL as a migration.
+CREATE TABLE app.oauth_clients (
+  client_id     text PRIMARY KEY,
+  redirect_uris jsonb NOT NULL,
+  client_name   text NOT NULL DEFAULT '',
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE app.oauth_tokens (
+  token      text PRIMARY KEY,
+  kind       text NOT NULL CHECK (kind IN ('access','refresh')),
+  client_id  text NOT NULL REFERENCES app.oauth_clients(client_id) ON DELETE CASCADE,
+  subject    text NOT NULL,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX oauth_tokens_expires_idx ON app.oauth_tokens (expires_at);
+
 CREATE TABLE app.jobs (
   id          bigserial PRIMARY KEY,
   kind        text NOT NULL CHECK (kind IN ('harvest_wfs','harvest_wms','harvest_wmts',

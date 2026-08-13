@@ -13,6 +13,12 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8080").rst
 GEODATA_API_KEYS = [k.strip() for k in os.environ.get("GEODATA_API_KEYS", "").split(",")
                     if k.strip()]
 
+# Shared invite code for the OAuth browser-login flow (oauth.py). Empty string
+# disables OAuth entirely (bearer keys still work). It is kept out of
+# GEODATA_API_KEYS on purpose: the invite code authorises *minting* a token, it is
+# never itself accepted as a bearer.
+GEODATA_INVITE_CODE = os.environ.get("GEODATA_INVITE_CODE", "").strip()
+
 S3_ENDPOINT = os.environ.get("S3_ENDPOINT", "http://minio:9000")
 S3_PUBLIC_ENDPOINT = os.environ.get("S3_PUBLIC_ENDPOINT", "http://localhost:9000")
 S3_BUCKET = os.environ.get("S3_BUCKET", "exports")

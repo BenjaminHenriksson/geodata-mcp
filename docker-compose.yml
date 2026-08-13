@@ -72,6 +72,8 @@ services:
       <<: *appenv
       # Bearer keys for /mcp (comma-separated raw keys; hashed at startup).
       GEODATA_API_KEYS: ${GEODATA_API_KEYS:?set in .env — auth is not optional}
+      # Shared invite code for the OAuth browser-login flow (empty disables OAuth).
+      GEODATA_INVITE_CODE: ${GEODATA_INVITE_CODE:-}
     depends_on:
       postgres:
         condition: service_healthy

@@ -7,6 +7,20 @@
 			flush_interval -1
 		}
 	}
+	# OAuth authorization-server + discovery endpoints live on the MCP service too
+	# (services/mcp/oauth.py). They must reach mcp:8000, not the viewer default.
+	handle /oauth/* {
+		reverse_proxy mcp:8000 {
+			lb_try_duration 10s
+			lb_try_interval 500ms
+		}
+	}
+	handle /.well-known/oauth-* {
+		reverse_proxy mcp:8000 {
+			lb_try_duration 10s
+			lb_try_interval 500ms
+		}
+	}
 	handle {
 		reverse_proxy viewer:8001 {
 			lb_try_duration 10s

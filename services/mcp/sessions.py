@@ -18,6 +18,7 @@ from psycopg import sql as pgsql
 from psycopg.errors import UniqueViolation
 
 import db
+import oauth
 
 AUTH_HEADER = "authorization"
 WORKSPACE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
@@ -88,6 +89,51 @@ def key_id_for_hash(key_hash: str) -> str | None:
         return row[0] if row else None
 
 
+def raw_bearer_from_context(ctx) -> str | None:
+    """The raw bearer token string from the MCP request context, or None."""
+    try:
+        rc = getattr(ctx, "request_context", None)
+        req = getattr(rc, "request", None)
+        headers = getattr(req, "headers", None)
+        if headers is not None:
+            return bearer_token(headers)
+    except Exception:
+        pass
+    return None
+
+
+def ensure_oauth_principal(subject: str) -> str | None:
+    """api_keys.id for an OAuth authorization subject, provisioning the row on first
+    use. Each subject is a distinct principal, so each OAuth login owns its own
+    workspaces. The digest is a namespaced SHA-256 of the subject (never a bearer that
+    could be replayed), so it satisfies the api_keys.key_hash CHECK. Returns None if
+    the row exists but was manually disabled."""
+    kh = hash_key("oauth-sub:" + subject)
+    with db.app_pool().connection() as conn:
+        conn.execute(
+            """INSERT INTO app.api_keys (key_hash, name) VALUES (%s, %s)
+               ON CONFLICT (key_hash) DO NOTHING""",
+            (kh, "oauth:" + subject[:34]),
+        )
+    return key_id_for_hash(kh)
+
+
+def principal_id_from_raw(raw: str | None) -> str | None:
+    """Resolve a raw bearer to an app.api_keys.id, accepting either a legacy shared
+    key or an OAuth access token. This is the single identity path shared by the
+    transport middleware (auth gate) and resolve() (workspace attribution), so both
+    agree on who the caller is."""
+    if not raw:
+        return None
+    kid = key_id_for_hash(hash_key(raw))
+    if kid is not None:
+        return kid
+    subject = oauth.subject_for_token(raw)
+    if subject is not None:
+        return ensure_oauth_principal(subject)
+    return None
+
+
 def bootstrap_env_keys(raw_keys: list[str]) -> None:
     """Reconcile app.api_keys with GEODATA_API_KEYS: env is the source of truth.
 
@@ -108,8 +154,12 @@ def bootstrap_env_keys(raw_keys: list[str]) -> None:
                     (kh, f"env:{i + 1}"),
                 )
             conn.execute(
+                # Only env-managed keys are reconciled here. OAuth-provisioned
+                # principals (name 'oauth:%', created lazily by ensure_oauth_principal)
+                # must survive restarts — without the name filter, every restart would
+                # disable them and orphan their workspaces.
                 "UPDATE app.api_keys SET disabled = true "
-                " WHERE NOT disabled AND NOT (key_hash = ANY(%s))",
+                " WHERE NOT disabled AND name LIKE 'env:%%' AND NOT (key_hash = ANY(%s))",
                 (hashes,),
             )
 
@@ -193,8 +243,10 @@ def resolve(ctx) -> Workspace:
 
     Called at the top of every tool; also bumps last_used on key and workspace.
     """
-    key_hash = key_hash_from_context(ctx)
-    api_key_id = key_id_for_hash(key_hash)
+    raw = raw_bearer_from_context(ctx)
+    if not raw:
+        raise AuthError("missing Authorization: Bearer <api key> header")
+    api_key_id = principal_id_from_raw(raw)
     if api_key_id is None:
         raise AuthError("unknown or disabled API key")
     with db.app_pool().connection() as conn:

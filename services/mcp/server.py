@@ -20,6 +20,7 @@ import export_ops
 import layer_ops
 import load_ops
 import map_ops
+import oauth
 import query_ops
 import search_ops
 import sessions
@@ -59,7 +60,10 @@ class BearerAuthMiddleware:
             exp = self._cache.get(kh)
             if exp is not None and exp > now:
                 return True
-        ok = sessions.key_id_for_hash(kh) is not None
+        # Accepts a legacy shared key OR an OAuth access token (same identity path
+        # resolve() uses). Cache keyed on the token digest, so each distinct OAuth
+        # token caches independently.
+        ok = sessions.principal_id_from_raw(raw_key) is not None
         if ok:
             with self._lock:
                 self._cache[kh] = now + self.CACHE_TTL_S
@@ -78,10 +82,13 @@ class BearerAuthMiddleware:
         if raw:
             ok = await anyio.to_thread.run_sync(self._check, raw)
         if not ok:
+            # The resource_metadata pointer lets an OAuth client discover this server
+            # and start the browser login flow instead of demanding a pasted key.
             response = JSONResponse(
-                {"error": "unauthorized — send 'Authorization: Bearer <api key>'"},
+                {"error": "unauthorized — send 'Authorization: Bearer <api key>' "
+                          "or connect via OAuth"},
                 status_code=401,
-                headers={"WWW-Authenticate": "Bearer"},
+                headers={"WWW-Authenticate": oauth.www_authenticate_value()},
             )
             return await response(scope, receive, send)
         return await self.app(scope, receive, send)
@@ -460,8 +467,18 @@ def main() -> None:
               "(auth is not optional).", file=sys.stderr)
         raise SystemExit(1)
     sessions.bootstrap_env_keys(config.GEODATA_API_KEYS)
+    oauth.init()
     app = mcp.streamable_http_app()
+    # OAuth discovery + browser-login endpoints. They live outside /mcp by path, so the
+    # bearer gate (which only guards /mcp*) lets them through unauthenticated, as the
+    # OAuth spec requires. Routes must be added before the app starts serving.
+    app.router.routes.extend(oauth.routes())
     app.add_middleware(BearerAuthMiddleware)
+    if config.GEODATA_INVITE_CODE:
+        print("auth: OAuth invite-code login enabled + bearer keys", file=sys.stderr)
+    else:
+        print("auth: bearer keys only (GEODATA_INVITE_CODE unset — OAuth disabled)",
+              file=sys.stderr)
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 
 
