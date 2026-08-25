@@ -12,6 +12,20 @@ bump.
 
 ## [Unreleased]
 
+### Added
+- **OAuth login for the workspace-manager UI** (`/workspaces`), alongside the existing
+  API-key login. The viewer is now an OAuth 2.1 + PKCE client of the MCP authorization
+  server (`services/mcp/oauth.py`): "Logga in med OAuth" runs the invite-code flow and
+  resolves to the same `app.api_keys` principal the MCP derives, so both login paths
+  share workspaces. New `services/viewer/oauth_client.py`; routes `/auth/login` and
+  `/auth/callback`; gated by `GEODATA_INVITE_CODE`. (ska-krav #17)
+
+### Security
+- Viewer auth cookies (`gdw_auth` session + `gdw_oauth` OAuth state) now set the
+  `Secure` flag by default when the public origin is HTTPS (`COOKIE_SECURE` overrides).
+- Domain-separated the OAuth state-cookie HMAC from the session-cookie HMAC, and made
+  all cookie/CSRF signature comparisons byte-safe (no `TypeError` on non-ASCII input).
+
 ## [0.1.0] - 2026-08-25
 
 Pilot bid baseline for **Sundsvalls kommun** — GovTech4All Pilot 3 "AI och

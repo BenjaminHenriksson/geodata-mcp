@@ -116,6 +116,13 @@ services:
       <<: *appenv
       # Signs the workspace-manager login cookie (any long random string).
       VIEWER_SECRET: ${VIEWER_SECRET:?set in .env}
+      # Enables "Logga in med OAuth" on the manager UI. Presence (same invite code
+      # the mcp service uses) gates the button; the viewer acts as an OAuth client of
+      # the mcp authorization server. Leave unset to offer API-key login only.
+      GEODATA_INVITE_CODE: ${GEODATA_INVITE_CODE:-}
+      # Internal address of the mcp service for the server-to-server OAuth token
+      # exchange (the public origin is not resolvable from inside this container).
+      MCP_INTERNAL_URL: ${MCP_INTERNAL_URL:-http://mcp:8000}
       # For the authenticated-WMS proxy (/wmsref); same vars as the worker.
       LANTMATERIET_CREDENTIALS: ${LANTMATERIET_CREDENTIALS:-}
       GEODATA_HTTP_CREDENTIALS: ${GEODATA_HTTP_CREDENTIALS:-}
