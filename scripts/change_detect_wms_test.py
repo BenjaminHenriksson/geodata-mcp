@@ -1,4 +1,4 @@
-"""Live E2E for load(op='change_detect') with WMS orthophoto vintages.
+"""Live E2E for analyze(id='change_detect') with WMS orthophoto vintages.
 
 Same flow as change_detect_test.py, but the vintages are the Lantmäteriet
 orthophotos cascaded PUBLICLY by karta.sundsvall.se (source kind 'wms',
@@ -64,7 +64,7 @@ async def poll_job(s, job_id, timeout_s=1200, poll_s=10):
     transport_errors = 0
     while time.monotonic() - t0 < timeout_s:
         try:
-            st = await call(s, "load", op="status", job_id=job_id)
+            st = await call(s, "analyze", op="status", job_id=job_id)
             transport_errors = 0
         except Exception as e:  # stream ended, timeout, reconnect
             transport_errors += 1
@@ -113,10 +113,10 @@ async def main():
         check("test area WKT computed", area_wkt and area_wkt.startswith("POLYGON"),
               str(area_wkt)[:100])
 
-        out = await call(s, "load", op="change_detect", area=area_wkt,
-                         concepts=["building"],
-                         collection_a=COLLECTION_A, collection_b=COLLECTION_B,
-                         table_name=TABLE, threshold=0.4, gsd=0.25)
+        out = await call(s, "analyze", op="run", id="change_detect",
+                         params={"area": area_wkt, "concepts": ["building"],
+                                 "collection_a": COLLECTION_A, "collection_b": COLLECTION_B,
+                                 "table_name": TABLE, "threshold": 0.4, "gsd": 0.25})
         job_id = out.get("job_id")
         check("change_detect (wms vintages) enqueued", bool(job_id), str(out)[:200])
 

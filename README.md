@@ -37,6 +37,8 @@ Upgrading an existing database (pre-auth installs) instead of starting clean:
 docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/001_durable_workspaces.sql
 docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/002_connector_job_kinds.sql
 docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/003_change_detection.sql
+docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/004_oauth.sql
+docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/005_job_cancel.sql
 ```
 
 - MCP endpoint (streamable HTTP): `http://localhost:8080/mcp` — **requires
@@ -47,7 +49,7 @@ docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/003_
   Add `?renderer=origo` for the Origo/OpenLayers renderer; each page links to the other.
 - Postgres: `localhost:5433` (`postgres` / `geodata_dev`), MinIO console: `localhost:9001`
 
-## The seven tools
+## The eight tools
 
 | tool | what it does |
 |------|--------------|
@@ -57,6 +59,7 @@ docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/003_
 | `query` | read-only SQL as `agent_ro` (PostGIS 3.5 + pgvector, 15 s timeout, 1 000-row cap); every call logged with a `query_id` and server-extracted referenced tables |
 | `layer` | the only write path: CTAS into the active workspace, per-row updates, style/notes; every op appends to the append-only `app.provenance` ledger |
 | `map` | upsert a renderer-agnostic map view; returns a capability URL rendered by MapLibre or Origo; open MapLibre pages pick up changes in ≤ 5 s via ETag polling |
+| `analyze` | registry of long-running analysis processors (`list`/`describe`/`run`/`status`/`cancel`); results land as workspace layers. First processor: `change_detect` — SAM3 orthophoto change detection between two imagery vintages |
 | `export` | GPKG/GeoJSON/CSV/Parquet via ogr2ogr → MinIO presigned URL, with a citation sidecar generated from the provenance ledger |
 
 ## Identity, auth and durable workspaces

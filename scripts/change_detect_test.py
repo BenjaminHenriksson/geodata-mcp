@@ -1,4 +1,4 @@
-"""Live E2E for load(op='change_detect') — SAM3 orthophoto change detection.
+"""Live E2E for analyze(id='change_detect') — SAM3 orthophoto change detection.
 
 Runs a real detection over a ~400x400 m box in central Sundsvall (Stenstan)
 between the 2021 and 2023 T2 orthophoto vintages, checks the output tables,
@@ -64,7 +64,7 @@ async def poll_job(s, job_id, timeout_s=1200, poll_s=10):
     transport_errors = 0
     while time.monotonic() - t0 < timeout_s:
         try:
-            st = await call(s, "load", op="status", job_id=job_id)
+            st = await call(s, "analyze", op="status", job_id=job_id)
             transport_errors = 0
         except Exception as e:  # stream ended, timeout, reconnect
             transport_errors += 1
@@ -104,10 +104,21 @@ async def main():
         check("test area WKT computed", area_wkt and area_wkt.startswith("POLYGON"),
               str(area_wkt)[:100])
 
-        out = await call(s, "load", op="change_detect", area=area_wkt,
-                         concepts=["byggnad", "parkeringsplats"],
-                         collection_a=COLLECTION_A, collection_b=COLLECTION_B,
-                         table_name=TABLE, threshold=0.4)
+        out = await call(s, "analyze", op="list")
+        procs = {pr.get("id") for pr in out.get("processors") or []}
+        check("analyze registry lists change_detect", "change_detect" in procs, str(out)[:160])
+        out = await call(s, "analyze", op="describe", id="change_detect")
+        schema = out.get("params_schema") or {}
+        check("describe returns params schema", "concepts" in (schema.get("properties") or {}),
+              str(out)[:160])
+
+        # concepts in ENGLISH: SAM3's text grounding fails silently on Swedish
+        # (byggnad finds nothing where 'building' scores 0.8+).
+        out = await call(s, "analyze", op="run", id="change_detect",
+                         params={"area": area_wkt,
+                                 "concepts": ["building", "parking lot"],
+                                 "collection_a": COLLECTION_A, "collection_b": COLLECTION_B,
+                                 "table_name": TABLE, "threshold": 0.4})
         job_id = out.get("job_id")
         check("change_detect enqueued", bool(job_id), str(out)[:200])
 

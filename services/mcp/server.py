@@ -15,6 +15,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+import analysis_ops
 import config
 import export_ops
 import layer_ops
@@ -151,10 +152,6 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
          slug: str | None = None, license: str = "", notes: str = "",
          dataset_id: str | None = None, table_name: str | None = None, target: str = "ref",
          rows: list | None = None, source: str | None = None, crs: str | None = None,
-         area: str | None = None, concepts: list | None = None,
-         collection_a: str | None = None, collection_b: str | None = None,
-         threshold: float | None = None, min_area_m2: float | None = None,
-         method: str | None = None, gsd: float | None = None,
          job_id: int | None = None, ctx: Context = None) -> dict:
     """Register data sources and bring datasets into the database. Ops:
 
@@ -174,36 +171,6 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
       EPSG:3014 unless crs='4326'), or 'lon'/'lat' keys (always WGS84). source is
       MANDATORY — say where the data comes from; it is recorded in provenance.
       Column types are inferred (text / double precision / bigint / boolean).
-    - op='change_detect' {area, concepts, collection_a, collection_b, table_name,
-      threshold?, min_area_m2?, method?, gsd?}: compare two orthophoto vintages with SAM3
-      concept segmentation and write where concepts appeared/disappeared/changed to your
-      workspace. Results are change CANDIDATES for review, not conclusions — inspect them
-      against the imagery before reporting anything. concepts: 1-6 free-text noun phrases,
-      ENGLISH ONLY — the model's text grounding fails silently on Swedish (verified:
-      'byggnad' finds nothing where 'building' scores 0.8+). Translate user terms first,
-      e.g. byggnad→'building', småhus→'house', upplag→'storage yard', pool→'swimming pool',
-      parkeringsplats→'parking lot'.
-      collection_a/collection_b: either STAC orthophoto collection ids (source kind
-      'stac', e.g. external_id LIKE 'orto-t2-%') or WMS orthophoto vintage layers
-      (source kind 'wms', e.g. 'Lantmateriet:Orto2010_wms',
-      'Lantmateriet:HistoriskaOrtofoton1975_wms' from the Sundsvall GeoServer — free,
-      no Lantmäteriet account needed). List them via the query tool:
-      SELECT d.external_id, s.kind FROM catalog.datasets d JOIN catalog.sources s
-      ON s.id = d.source_id AND s.kind IN ('stac','wms') WHERE d.external_id ~* 'orto'.
-      STAC and WMS vintages can be mixed in one run. gsd (optional, default 0.25 m/px)
-      sets the processing resolution for WMS vintages; STAC items carry their own.
-      WMS vintages have no capture-date metadata — the vintage year comes from the
-      layer name, so cross-season false positives cannot be warned about.
-      area: a layer ref ('ref.<t>' or '<your ws schema>.<t>' — its bounding box is used),
-      'xmin,ymin,xmax,ymax' in EPSG:3014, or EPSG:3014 WKT; max 2 km² per run. Writes
-      <ws>.<table_name> (concept, change_class 'appeared'|'disappeared'|'changed',
-      confidence_a, confidence_b, iou, area_m2, vintage/datetime columns, geom) and
-      <ws>.<table_name>_coverage (tile_id, status 'analyzed'|'missing_a'|'missing_b'|
-      'error', gsd_m, geom). No candidate rows over an 'analyzed' tile means no change
-      found there; any other coverage status means that tile was NOT analyzed — check
-      coverage before reading absence as evidence. Runs minutes; poll with op='status'.
-      Follow up: query the result table, map it over the ortofoto WMS
-      ('wms:<dataset id>' basemap), refine concepts and re-run on subareas.
     - op='status' {job_id}: one job's row (status queued|running|done|error, result, error).
     - op='jobs' {}: the last 20 jobs.
     - op='embed' {}: (re)embed catalog + document chunks for semantic search (idempotent).
@@ -225,8 +192,8 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
         if op == "inline":
             return load_ops.inline(w.id, rows or [], table_name or "", source, crs)
         if op == "change_detect":
-            return load_ops.change_detect(w.id, area, concepts, collection_a, collection_b,
-                                          table_name, threshold, min_area_m2, method, gsd)
+            return {"error": "moved — use analyze(op='run', id='change_detect', params={...}); "
+                             "analyze(op='describe', id='change_detect') has the schema"}
         if op == "status":
             if job_id is None:
                 return {"error": "status needs job_id"}
@@ -235,11 +202,58 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
             return load_ops.jobs()
         if op == "embed":
             return load_ops.embed(w.id)
-        return {"error": "op must be one of register|ingest|inline|change_detect|status|jobs|embed"}
+        return {"error": "op must be one of register|ingest|inline|status|jobs|embed"}
     except sessions.AuthError as e:
         return _auth_error(e)
     except Exception as e:
         return {"error": f"load failed: {str(e).strip()}"}
+
+
+@mcp.tool()
+def analyze(op: str, id: str | None = None, params: dict | None = None,
+            job_id: int | None = None, timeout_s: float | None = None,
+            ctx: Context = None) -> dict:
+    """Run long-running analysis processors (model inference over imagery etc.).
+
+    Results land as LAYERS in your active workspace — read them with the query
+    tool, style with layer, show with map. Processors are a registry: discover
+    them here instead of reading a fixed list.
+
+    - op='list' {}: available processors — [{id, title, summary}].
+    - op='describe' {id}: one processor's full guidance + JSON Schema of its params.
+      Call this before the first run — params are validated against exactly this schema.
+    - op='run' {id, params}: start it; returns {job_id, status} (waits up to 8 s, so
+      fast jobs come back finished). Runs typically take minutes.
+    - op='status' {job_id, timeout_s?}: the job row (status queued|running|done|error|
+      cancelled, result, error). timeout_s>0 long-polls up to 25 s. When done, the
+      result names the layers written.
+    - op='cancel' {job_id}: cancel a QUEUED job. A running job cannot be interrupted —
+      it finishes or errors on its own.
+
+    First processor: 'change_detect' — SAM3 orthophoto change detection between two
+    imagery vintages. Start with op='list'.
+    """
+    try:
+        w = _ws(ctx)
+        if op == "list":
+            return analysis_ops.list_processors()
+        if op == "describe":
+            return analysis_ops.describe(id)
+        if op == "run":
+            return analysis_ops.run(w.id, id, params)
+        if op == "status":
+            if job_id is None:
+                return {"error": "status needs job_id"}
+            return analysis_ops.status(job_id, timeout_s)
+        if op == "cancel":
+            if job_id is None:
+                return {"error": "cancel needs job_id"}
+            return analysis_ops.cancel(job_id)
+        return {"error": "op must be one of list|describe|run|status|cancel"}
+    except sessions.AuthError as e:
+        return _auth_error(e)
+    except Exception as e:
+        return {"error": f"analyze failed: {str(e).strip()}"}
 
 
 @mcp.tool()

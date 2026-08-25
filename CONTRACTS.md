@@ -163,7 +163,7 @@ app.jobs       (id bigserial PK,
                      'ingest_file','ingest_pdf','ingest_text','embed_catalog','export',
                      'change_detect')),
                 payload jsonb NOT NULL DEFAULT '{}',
-                status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error')),
+                status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error','cancelled')),
                 result jsonb, error text, workspace_id text,
                 attempts int DEFAULT 0, created_at timestamptz DEFAULT now(),
                 started_at timestamptz, finished_at timestamptz)
@@ -291,7 +291,7 @@ On each tool call, resolve the principal from the **per-request** Starlette requ
 propagate into tool handlers in stateful mode because the MCP session task is spawned once at
 `initialize`. Hash the key, look up `app.api_keys`, then take that key's active
 `app.workspaces` row (creating and activating `default` when there is none). The `ws_*` schema
-is created lazily only when `layer`/`load op=inline` first writes. Seven tools; all return
+is created lazily only when `layer`/`load op=inline` first writes. Eight tools; all return
 JSON-serializable dicts.
 
 0. `workspace(op='current', name=None, new_name=None)` — durable workspace management, scoped to
@@ -333,26 +333,41 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
      `ingest_file`; raster_ref is not ingestable (reference on maps via `wms:<id>`).
      `workspace` targets the session's ws schema. Poll the job up to 8 s before returning
      (`status` in the reply either way).
-   - `change_detect {area, concepts, collection_a, collection_b, table_name, threshold=0.5,
-     min_area_m2=None, method='mask_compare'}` — enqueue a SAM 3 change-detection job (kind
-     `change_detect`). `area`: layer ref (`ref.x`/`ws_….x`, envelope of its extent), bbox
-     string `'xmin,ymin,xmax,ymax'` (3014), or WKT 3014; must be a non-empty areal geometry
-     ≤ **2.0 km²**. `concepts`: 1–6 free-text noun phrases (each ≤ 80 chars). Collections
-     are `catalog.datasets.external_id` values from a `stac` source; must exist and differ.
-     Refuses if `{table}` or `{table}_coverage` already exists. `ensure_ws_schema` before
-     enqueue; waits up to 8 s then returns the ingest-style `{job_id, status, note}` reply.
-     Docstring frames results as screening candidates, never assertions.
+   - `change_detect` — REMOVED from load (pointer error): moved to the `analyze` tool.
    - `inline {rows, table_name, source}` — rows = list of flat dicts, optional `wkt` or
      `lon`/`lat` keys become geom (4326→3014). Synchronous insert into ws schema; provenance kind `inline`.
    - `status {job_id}` → job row. `jobs {}` → last 20 jobs.
-3. `query(sql, limit=500)` — single statement, must start with SELECT/WITH/EXPLAIN/SHOW/VALUES/TABLE
+3. `analyze(op, id=None, params=None, job_id=None, timeout_s=None)` — registry of
+   long-running analysis processors; the tool declaration is CONSTANT-SIZE regardless of how
+   many processors exist (growth happens in `analysis_ops.REGISTRY`, not in the schema).
+   Results are always layers in the caller's ws schema.
+   - `list {}` → `[{id, title, summary}]`.
+   - `describe {id}` → full prose guidance + **JSON Schema** of params. Schema, guidance and
+     validator live side by side in `analysis_ops.py` (single source of truth — the
+     docstring-drift lesson from load's old change_detect block).
+   - `run {id, params}` → validate (unknown/missing params are actionable errors citing the
+     schema) and enqueue; waits up to 8 s then returns `{job_id, status, note}`.
+   - `status {job_id, timeout_s=0}` → job row; `timeout_s` (≤ 25) long-polls. A done job's
+     reply names the result layers.
+   - `cancel {job_id}` → queued jobs only: `status='cancelled'` (worker claim takes
+     `status='queued'`, so a cancelled job is never picked up — migration 005). Running jobs
+     are not interruptible; done/error replies say so.
+   Processor `change_detect` (job kind `change_detect`, worker unchanged): `area`: layer ref
+   (`ref.x`/`ws_….x`, envelope of its extent), bbox string `'xmin,ymin,xmax,ymax'` (3014), or
+   WKT 3014; must be a non-empty areal geometry ≤ **2.0 km²**. `concepts`: 1–6 ENGLISH
+   noun phrases (each ≤ 80 chars; Swedish fails silently — verified). Collections are
+   `catalog.datasets.external_id` values from a `stac` or `wms` source; must exist and
+   differ; `gsd` (0.05–2.0, default 0.25) sets WMS processing resolution. Refuses if
+   `{table}` or `{table}_coverage` already exists. `ensure_ws_schema` before enqueue.
+   Guidance frames results as screening candidates, never assertions.
+4. `query(sql, limit=500)` — single statement, must start with SELECT/WITH/EXPLAIN/SHOW/VALUES/TABLE
    (case-insensitive). Run `EXPLAIN (FORMAT JSON)` first as agent_ro → collect referenced
    `schema.relation`s; then execute as agent_ro with `SET LOCAL statement_timeout='15s'`, cap
    `limit` at 1000 rows. Geometry columns are returned as `ST_AsText` capped at 400 chars
    (server post-processes via information from cursor description / value sniffing). Log to
    app.query_log; return `{query_id, columns, rows, row_count, truncated, referenced_tables}`.
    On SQL error: return `{error, hint}` (no exception), still logged.
-4. `layer(op, ...)` — the ONLY write path; every op appends `app.provenance` and runs with
+5. `layer(op, ...)` — the ONLY write path; every op appends `app.provenance` and runs with
    `SET LOCAL app.workspace_id`:
    - `create {name, sql, notes='', style=None}` — validate name; EXPLAIN the SELECT (as agent_ro)
      for input tables; as agent_ws: `CREATE TABLE ws_x.<name> AS <sql>`; if a geometry column
@@ -363,14 +378,14 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
      inferred); provenance `layer_update` with the values dict in details.
    - `style {name, style=None, popup=None, label=None, visible=None}` — upsert layer_meta only.
    - `rename {name, new_name}`, `drop {name}`, `list {}` (session layers + ref tables with meta).
-5. `map(op='upsert', view_id=None, title=None, layers=None, basemap='positron', extent_3014=None, legend=True)`
+6. `map(op='upsert', view_id=None, title=None, layers=None, basemap='positron', extent_3014=None, legend=True)`
    - upsert: validate layer refs (existing table in ref/own ws, or `wms:<dataset_id>` for
      raster_ref datasets); missing extent → compute from ST_Extent of the vector layers; insert or
      update app.map_views (version++). Layer entry: `{ref, style?, popup?, label?, visible?}`;
      style keys: `fill, stroke, opacity, circle, width` (hex colors). Return
      `{view_id, url: PUBLIC_BASE_URL/v/<view_id>, version}`.
    - `get {view_id}` → spec + version. `list {}` → session's views.
-6. `export(layers, format='gpkg', cite=True)` — enqueue export job, wait up to 30 s, presign
+7. `export(layers, format='gpkg', cite=True)` — enqueue export job, wait up to 30 s, presign
    MinIO GET URLs (24 h) against `S3_PUBLIC_ENDPOINT` → `{url, sidecar_url, format, expires_hours}`.
 
 Errors: tools return `{"error": "..."}` dicts rather than raising, with actionable messages.
@@ -474,6 +489,6 @@ Identifier safety everywhere: schema/table names validated `^[a-z0-9_]{1,63}$` a
    layers ingest, the GWC WMTS renders on a map, a text page lands in doc.chunks, and the
    authenticated Lantmäteriet STAC + WMS harvest with `LANTMATERIET_CREDENTIALS`.
 9. Orthophoto change detection end to end (`scripts/change_detect_test.py`, segmenter running
-   on the host): `load(op='change_detect')` over two Lantmäteriet T2 vintages writes the
+   on the host): `analyze(op='run', id='change_detect')` over two Lantmäteriet T2 vintages writes the
    candidates + coverage tables into the workspace, and the map view renders them over the
    årsvisa ortofoto WMS through `/wmsref` (migration 003 applied).

@@ -157,7 +157,7 @@ Change detection is deliberately *not* an architectural special case — it is o
 
 ### 7.1 The job contract (how the agent drives it)
 
-The agent initiates a run through `load(op:"change_detect", …)` with four parameters, each of which it can derive itself:
+The agent initiates a run through `analyze(op:"run", id:"change_detect", …)` with four parameters, each of which it can derive itself:
 
 - **area** — any workspace geometry or bbox (e.g. "areas without building permits" from a prior `query`),
 - **vintages** — two acquisitions picked by querying pgSTAC (dates, resolution, coverage are ordinary SQL),

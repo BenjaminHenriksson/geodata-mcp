@@ -124,7 +124,7 @@ CREATE TABLE app.jobs (
                                             'ingest_pdf','ingest_text',
                                             'embed_catalog','export','change_detect')),
   payload     jsonb NOT NULL DEFAULT '{}'::jsonb,
-  status      text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error')),
+  status      text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error','cancelled')),
   result      jsonb,
   error       text,
   workspace_id text,

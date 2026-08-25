@@ -87,8 +87,8 @@ async def call(session, tool, **args):
     return out
 
 
-async def wait_job(session, job_id, timeout_s=900, poll_s=3):
-    """Poll load(op=status) until the job finishes.
+async def wait_job(session, job_id, timeout_s=900, poll_s=3, tool="load"):
+    """Poll <tool>(op=status) until the job finishes (tool: "load" or "analyze").
 
     Long ingests outlive an idle SSE stream, so a transient transport error during the
     wait is retried rather than aborting a job that is still running server-side.
@@ -96,7 +96,7 @@ async def wait_job(session, job_id, timeout_s=900, poll_s=3):
     transport_errors = 0
     for _ in range(int(timeout_s / poll_s)):
         try:
-            st = await call(session, "load", op="status", job_id=job_id)
+            st = await call(session, tool, op="status", job_id=job_id)
             transport_errors = 0
         except Exception as e:  # stream ended, timeout, reconnect
             transport_errors += 1
