@@ -334,3 +334,32 @@ scripts/                   bootstrap_sundsvall.py, e2e_test.py, security_test.py
   `ref` table claimed by another dataset. A worker restart requeues jobs left mid-flight.
 - Map pages keep a `preserveDrawingBuffer` WebGL context so tab captures and future
   server-side PNG snapshots see the rendered map.
+
+## License
+
+Licensed under the **GNU Affero General Public License v3.0 only** (`AGPL-3.0-only`) —
+full text in [`LICENSE`](LICENSE). Public Money → Public Code. The public repository,
+open licence and continuous version history satisfy the procurement's open-source
+requirements; see the compliance section below.
+
+## Compliance & governance (Sundsvall UH-2026-159)
+
+This repository is the technical deliverable for **Govtech4all Pilot 3 (AI & geodata)**,
+Sundsvalls kommun, diarienummer **UH-2026-159**. Mapping to every *ska-krav* in the
+tender's *Obligatoriska krav* lives in **[`COMPLIANCE.md`](COMPLIANCE.md)** (with the
+e-Avrop answer form in [`docs/obligatoriska-krav-svar.md`](docs/obligatoriska-krav-svar.md)).
+
+| Area | Where |
+|------|-------|
+| Licence (AGPL-3.0-only), CHANGELOG | [`LICENSE`](LICENSE), [`CHANGELOG.md`](CHANGELOG.md) |
+| Open REST API + OpenAPI 3.0 | [`services/viewer/openapi.yaml`](services/viewer/openapi.yaml), [`docs/api.md`](docs/api.md) |
+| CI/CD + dependency & secret scanning, CodeQL | [`.github/workflows/`](.github/workflows/) |
+| Infrastructure-as-Code (Helm, OpenShift) | [`deploy/helm/geodata-mcp/`](deploy/helm/geodata-mcp/), [`deploy/README.md`](deploy/README.md) |
+| SBOM + dependency inventory | [`sbom/geodata-mcp.cdx.json`](sbom/geodata-mcp.cdx.json), [`docs/beroenden.md`](docs/beroenden.md) |
+| Architecture decisions (ADR) | [`docs/adr/`](docs/adr/) |
+| Drifthandbok + felsökning (sv) | [`docs/drifthandbok.md`](docs/drifthandbok.md), [`docs/kapacitet.md`](docs/kapacitet.md) |
+| Observability (logs/metrics/tracing) | [`docs/observability.md`](docs/observability.md), [`services/viewer/obs.py`](services/viewer/obs.py) |
+| Accessibility (WCAG 2.1 AA) + Swedish UI | [`docs/tillganglighet-wcag.md`](docs/tillganglighet-wcag.md) |
+| Security policy + regulatory posture | [`SECURITY.md`](SECURITY.md), [`docs/regelefterlevnad.md`](docs/regelefterlevnad.md) |
+| GDPR / dataskydd | [`docs/dataskydd-gdpr.md`](docs/dataskydd-gdpr.md) |
+| Exit plan, SLA, energy/CO₂, load test, security review, knowledge transfer | [`docs/exitplan.md`](docs/exitplan.md), [`docs/sla.md`](docs/sla.md), [`docs/energi-co2.md`](docs/energi-co2.md), [`docs/lasttest.md`](docs/lasttest.md), [`docs/sakerhetsgranskning.md`](docs/sakerhetsgranskning.md), [`docs/kunskapsoverforing.md`](docs/kunskapsoverforing.md) |
