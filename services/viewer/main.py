@@ -1,5 +1,6 @@
 """Viewer service: map pages, MapLibre/Origo compilation, GeoJSON + MVT endpoints,
 and the auth-gated workspace manager UI."""
+import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -14,8 +15,15 @@ import compile_maplibre
 import compile_origo
 import dbq
 import netauth
+import obs
 import page
 import viewer_auth
+
+# Centralised observability (#81): structured JSON logs to stdout. Additive and
+# stdlib-only, so it never affects request handling. Configured at import time
+# so every uvicorn worker logs in the same format.
+obs.init_logging(service="viewer")
+log = logging.getLogger("viewer.main")
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -27,12 +35,16 @@ SIMPLIFY_THRESHOLD = 5000
 @asynccontextmanager
 async def lifespan(_app):
     dbq.get_pool()
+    log.info("viewer started", extra={"event": "startup"})
     yield
     dbq.close_pool()
 
 
 app = FastAPI(title="geodata viewer", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")
+# Prometheus scrape target (#81). ASGI sub-app; degrades to a plain-text 200 if
+# prometheus_client is unavailable, so mounting never breaks startup.
+app.mount("/metrics", obs.metrics_app(), name="metrics")
 
 # Content-Security-Policy for the HTML pages. This is load-bearing, not hardening
 # theatre: Origo renders layer titles via createContextualFragment and feature-info

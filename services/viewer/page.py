@@ -3,11 +3,11 @@
 import html
 
 _MAPLIBRE_PAGE = """<!DOCTYPE html>
-<html lang="en">
+<html lang="sv">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Map view</title>
+<title>Kartvy</title>
 <link rel="stylesheet" href="/static/maplibre-gl.css">
 <style>
   html, body { height: 100%; margin: 0; }
@@ -73,15 +73,22 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
     box-shadow: 0 1px 4px rgba(0,0,0,.25);
   }
   #renderer-toggle:hover { background: #fff; }
+  .skip-link {
+    position: absolute; left: -9999px; top: 0; z-index: 30;
+    background: #1f78b4; color: #fff; padding: 8px 14px; border-radius: 0 0 4px 0;
+    font: 600 13px/1.4 system-ui, sans-serif; text-decoration: none;
+  }
+  .skip-link:focus { left: 0; }
 </style>
 </head>
 <body>
-<div id="map"></div>
-<div id="titlebar"></div>
-<div id="inspector"></div>
-<div id="legend"></div>
-<div id="error"></div>
-<a id="renderer-toggle" href="/v/__VIEW_ID__?renderer=origo" title="Render this view with Origo (OpenLayers)">⇄ Origo</a>
+<a class="skip-link" href="#map">Hoppa till innehåll</a>
+<div id="map" role="main" aria-label="Interaktiv kartvy" tabindex="-1"></div>
+<div id="titlebar" role="status" aria-live="polite"></div>
+<div id="inspector" role="region" aria-label="Bildlager och förändringar"></div>
+<div id="legend" role="region" aria-label="Teckenförklaring"></div>
+<div id="error" role="alert"></div>
+<a id="renderer-toggle" href="/v/__VIEW_ID__?renderer=origo" title="Rendera den här vyn med Origo (OpenLayers)" aria-label="Rendera den här vyn med Origo (OpenLayers)">⇄ Origo</a>
 <script nonce="__NONCE__" src="/static/maplibre-gl.js"></script>
 <script nonce="__NONCE__">
 (function () {
@@ -127,7 +134,7 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
     el.innerHTML = "";
     var head = document.createElement("div");
     head.className = "legend-title";
-    head.textContent = "Legend";
+    head.textContent = "Teckenförklaring";
     el.appendChild(head);
     entries.forEach(function (e) {
       var row = document.createElement("div");
@@ -209,13 +216,13 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
 
     var hdr = document.createElement("div");
     hdr.className = "hdr";
-    hdr.textContent = "Orthophoto";
+    hdr.textContent = "Ortofoto";
     el.appendChild(hdr);
 
     var seg = document.createElement("div");
     seg.className = "seg";
     var segButtons = {};
-    var mapBtn = segButton("Map", "Base map", function () { setImageryMode("map"); });
+    var mapBtn = segButton("Karta", "Bakgrundskarta", function () { setImageryMode("map"); });
     seg.appendChild(mapBtn); segButtons.map = mapBtn;
     ["before", "after"].forEach(function (side) {
       var info = compareMeta[side];
@@ -230,10 +237,11 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
     var row = document.createElement("div");
     row.className = "row";
     var lab = document.createElement("label");
-    lab.textContent = "Opacity";
+    lab.textContent = "Opacitet";
     var rng = document.createElement("input");
     rng.type = "range"; rng.min = "20"; rng.max = "100"; rng.step = "5";
     rng.value = String(Math.round(imageryOpacity * 100));
+    rng.setAttribute("aria-label", "Opacitet");
     rng.addEventListener("input", function () {
       imageryOpacity = (+rng.value) / 100; applyImagery();
     });
@@ -248,7 +256,7 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
       cb.type = "checkbox"; cb.checked = changesOn;
       cb.addEventListener("change", function () { changesOn = cb.checked; applyChanges(); });
       var sw = document.createElement("span"); sw.className = "sw";
-      var t = document.createElement("span"); t.textContent = "Change candidates";
+      var t = document.createElement("span"); t.textContent = "Förändringskandidater";
       chk.appendChild(cb); chk.appendChild(sw); chk.appendChild(t);
       el.appendChild(chk);
     }
@@ -256,7 +264,7 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
     if (compareMeta.before && compareMeta.after) {
       var tip = document.createElement("div");
       tip.className = "tip";
-      tip.innerHTML = "Press <kbd>Space</kbd> to blink before ↔ after.";
+      tip.innerHTML = "Tryck på <kbd>Blanksteg</kbd> för att växla mellan före ↔ efter.";
       el.appendChild(tip);
     }
 
@@ -375,11 +383,11 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
     fetchStyle(false).then(start).catch(function (err) {
       var el = document.getElementById("error");
       if (attempt < 6) {
-        el.textContent = "Loading map… (retrying: " + err.message + ")";
+        el.textContent = "Laddar kartan… (försöker igen: " + err.message + ")";
         el.style.display = "block";
         setTimeout(function () { boot(attempt + 1); }, 1500 * (attempt + 1));
       } else {
-        el.textContent = "Failed to load map: " + err.message;
+        el.textContent = "Kunde inte ladda kartan: " + err.message;
         el.style.display = "block";
       }
     }).then(function () {
@@ -403,11 +411,11 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
 # - Origo has no diff-apply equivalent to MapLibre's setStyle({diff:true}), so instead
 #   of silently rebooting the viewer under the user, changes surface as a reload prompt.
 _ORIGO_PAGE = """<!DOCTYPE html>
-<html lang="en">
+<html lang="sv">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Map view (Origo)</title>
+<title>Kartvy (Origo)</title>
 <link rel="stylesheet" href="/static/origo/css/style.css">
 <style>
   html, body { height: 100%; margin: 0; }
@@ -427,14 +435,21 @@ _ORIGO_PAGE = """<!DOCTYPE html>
             color: #1f78b4; background: #fff; font: 12px/1.5 system-ui, sans-serif; }
   #error { position: absolute; top: 45%; left: 0; right: 0; z-index: 20000; display: none;
            text-align: center; font: 14px/1.5 system-ui, sans-serif; color: #b00020; }
+  .skip-link {
+    position: absolute; left: -9999px; top: 0; z-index: 30000;
+    background: #1f78b4; color: #fff; padding: 8px 14px; border-radius: 0 0 4px 0;
+    font: 600 13px/1.4 system-ui, sans-serif; text-decoration: none;
+  }
+  .skip-link:focus { left: 0; }
 </style>
 </head>
 <body>
-<div id="app-wrapper"></div>
-<div id="note" class="chip"><span id="note-text"></span><button type="button" id="note-x">dismiss</button></div>
-<button id="reload" class="chip" type="button">Map updated — reload</button>
-<a id="renderer-toggle" class="chip" href="/v/__VIEW_ID__" title="Render this view with MapLibre">⇄ MapLibre</a>
-<div id="error"></div>
+<a class="skip-link" href="#app-wrapper">Hoppa till innehåll</a>
+<div id="app-wrapper" role="main" aria-label="Interaktiv kartvy" tabindex="-1"></div>
+<div id="note" class="chip" role="status" aria-live="polite"><span id="note-text"></span><button type="button" id="note-x" aria-label="Stäng meddelande">stäng</button></div>
+<button id="reload" class="chip" type="button">Kartan uppdaterad – ladda om</button>
+<a id="renderer-toggle" class="chip" href="/v/__VIEW_ID__" title="Rendera den här vyn med MapLibre" aria-label="Rendera den här vyn med MapLibre">⇄ MapLibre</a>
+<div id="error" role="alert"></div>
 <script nonce="__NONCE__" src="/static/origo/js/origo.min.js"></script>
 <script nonce="__NONCE__">
 (function () {
@@ -483,10 +498,10 @@ _ORIGO_PAGE = """<!DOCTYPE html>
       var el = document.getElementById("error");
       el.style.display = "block";
       if (attempt < 5) {
-        el.textContent = "Loading map… (retrying: " + err.message + ")";
+        el.textContent = "Laddar kartan… (försöker igen: " + err.message + ")";
         setTimeout(function () { boot(attempt + 1); }, 1500 * (attempt + 1));
       } else {
-        el.textContent = "Failed to load map: " + err.message;
+        el.textContent = "Kunde inte ladda kartan: " + err.message;
       }
     });
   }
@@ -498,11 +513,11 @@ _ORIGO_PAGE = """<!DOCTYPE html>
 """
 
 _LOGIN_PAGE = """<!DOCTYPE html>
-<html lang="en">
+<html lang="sv">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Workspace manager — sign in</title>
+<title>Arbetsytehanterare – logga in</title>
 <style>
   body { font: 15px/1.6 system-ui, sans-serif; max-width: 26rem; margin: 6rem auto; padding: 0 1rem; color: #222; }
   h1 { font-size: 1.25rem; }
@@ -513,27 +528,39 @@ _LOGIN_PAGE = """<!DOCTYPE html>
   button:hover { background: #17608f; }
   .error { color: #b00020; margin: 10px 0; }
   .hint { color: #666; font-size: 13px; }
+  label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .skip-link {
+    position: absolute; left: -9999px; top: 0;
+    background: #1f78b4; color: #fff; padding: 8px 14px; border-radius: 0 0 4px 0;
+    text-decoration: none;
+  }
+  .skip-link:focus { left: 0; }
 </style>
 </head>
 <body>
-<h1>Workspace manager</h1>
-<p class="hint">Sign in with a geodata API key (the same key MCP clients use as
-<code>Authorization: Bearer …</code>). Only a signed session cookie is stored.</p>
+<a class="skip-link" href="#huvudinnehall">Hoppa till innehåll</a>
+<main id="huvudinnehall">
+<h1>Arbetsytehanterare</h1>
+<p class="hint">Logga in med en API-nyckel för geodata (samma nyckel som MCP-klienter
+använder som <code>Authorization: Bearer …</code>). Endast en signerad
+sessionscookie lagras.</p>
 __ERROR__
 <form method="post" action="/login">
-  <input type="password" name="key" placeholder="API key" autofocus autocomplete="current-password">
-  <button type="submit">Sign in</button>
+  <label for="key">API-nyckel</label>
+  <input type="password" id="key" name="key" placeholder="Din API-nyckel" autofocus autocomplete="current-password">
+  <button type="submit">Logga in</button>
 </form>
+</main>
 </body>
 </html>
 """
 
 _WORKSPACES_SHELL = """<!DOCTYPE html>
-<html lang="en">
+<html lang="sv">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Workspaces</title>
+<title>Arbetsytor</title>
 <style>
   body { font: 15px/1.6 system-ui, sans-serif; max-width: 46rem; margin: 3rem auto; padding: 0 1rem; color: #222; }
   h1 { font-size: 1.25rem; display: flex; justify-content: space-between; align-items: baseline; }
@@ -563,17 +590,28 @@ _WORKSPACES_SHELL = """<!DOCTYPE html>
   .logout button { border: 0; background: none; color: #666; text-decoration: underline;
     cursor: pointer; padding: 0; font-size: 13px; }
   .empty { color: #666; }
+  .skip-link {
+    position: absolute; left: -9999px; top: 0;
+    background: #1f78b4; color: #fff; padding: 8px 14px; border-radius: 0 0 4px 0;
+    text-decoration: none;
+  }
+  .skip-link:focus { left: 0; }
 </style>
 </head>
 <body>
-<h1>Workspaces
-  <form class="logout" method="post" action="/logout"><input type="hidden" name="csrf" value="__CSRF__"><button type="submit">sign out</button></form>
+<a class="skip-link" href="#huvudinnehall">Hoppa till innehåll</a>
+<header>
+<h1>Arbetsytor
+  <form class="logout" method="post" action="/logout"><input type="hidden" name="csrf" value="__CSRF__"><button type="submit">logga ut</button></form>
 </h1>
-<p class="meta">Durable containers for an API key's layers and maps. The <b>active</b>
-workspace is where connected MCP agents read and write; activating another one takes
-effect on their next tool call.</p>
+</header>
+<main id="huvudinnehall">
+<p class="meta">Beständiga behållare för en API-nyckels lager och kartor. Den <b>aktiva</b>
+arbetsytan är där anslutna MCP-agenter läser och skriver; att aktivera en annan får
+effekt vid deras nästa verktygsanrop.</p>
 __ERROR__
 __ITEMS__
+</main>
 </body>
 </html>
 """
@@ -603,19 +641,19 @@ def _ws_item(w, csrf):
             f' <a href="/v/{e(m["view_id"])}?renderer=origo">origo</a>)</span></li>'
             for m in w["maps"])
         maps = f'<ul class="maps">{rows}</ul>'
-    active_badge = '<span class="badge">active</span>' if w["is_active"] else ""
+    active_badge = '<span class="badge">aktiv</span>' if w["is_active"] else ""
     activate = "" if w["is_active"] else (
         f'<form method="post" action="/workspaces/action">'
         f'<input type="hidden" name="csrf" value="{csrf}">'
         f'<input type="hidden" name="workspace_id" value="{wid}">'
         f'<input type="hidden" name="action" value="activate">'
-        f'<button type="submit">Activate</button></form>')
-    layer_word = "layer" if w["layer_count"] == 1 else "layers"
+        f'<button type="submit">Aktivera</button></form>')
+    layer_word = "lager" if w["layer_count"] == 1 else "lager"
     return f"""
 <div class="ws{' active' if w['is_active'] else ''}">
   <h2>{e(w['name'])} {active_badge}</h2>
   <div class="meta">{w['layer_count']} {layer_word} · schema {e(w['ws_schema'])} ·
-    created {e(w['created_at'])} · last used {e(w['last_used'])}</div>
+    skapad {e(w['created_at'])} · senast använd {e(w['last_used'])}</div>
   {maps}
   <div class="actions">
     {activate}
@@ -623,16 +661,16 @@ def _ws_item(w, csrf):
       <input type="hidden" name="csrf" value="{csrf}">
       <input type="hidden" name="workspace_id" value="{wid}">
       <input type="hidden" name="action" value="rename">
-      <input type="text" name="new_name" placeholder="new name" pattern="[a-z0-9][a-z0-9_-]{{0,39}}" required>
-      <button type="submit">Rename</button>
+      <input type="text" name="new_name" placeholder="nytt namn" aria-label="Nytt namn för arbetsytan" pattern="[a-z0-9][a-z0-9_-]{{0,39}}" required>
+      <button type="submit">Byt namn</button>
     </form>
     <details>
-      <summary>Delete…</summary>
+      <summary>Ta bort…</summary>
       <form class="confirm" method="post" action="/workspaces/action">
         <input type="hidden" name="csrf" value="{csrf}">
         <input type="hidden" name="workspace_id" value="{wid}">
         <input type="hidden" name="action" value="delete">
-        <button type="submit" class="danger">Really delete "{e(w['name'])}" and its {w['layer_count']} {layer_word}</button>
+        <button type="submit" class="danger">Bekräfta borttagning av "{e(w['name'])}" och dess {w['layer_count']} {layer_word}</button>
       </form>
     </details>
   </div>
@@ -644,8 +682,8 @@ def workspaces_page(workspaces, csrf, error=None):
     if workspaces:
         items = "".join(_ws_item(w, html.escape(csrf)) for w in workspaces)
     else:
-        items = ('<p class="empty">No workspaces yet — they appear when an MCP agent '
-                 'connects with this API key.</p>')
+        items = ('<p class="empty">Inga arbetsytor ännu – de skapas när en MCP-agent '
+                 'ansluter med den här API-nyckeln.</p>')
     return (_WORKSPACES_SHELL
             .replace("__CSRF__", html.escape(csrf))
             .replace("__ERROR__", err)
