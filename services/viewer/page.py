@@ -529,6 +529,14 @@ _LOGIN_PAGE = """<!DOCTYPE html>
   .error { color: #b00020; margin: 10px 0; }
   .hint { color: #666; font-size: 13px; }
   label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .or { display: flex; align-items: center; text-align: center; color: #888;
+    font-size: 12px; margin: 18px 0; }
+  .or::before, .or::after { content: ""; flex: 1; border-top: 1px solid #ddd; }
+  .or::before { margin-right: .6em; } .or::after { margin-left: .6em; }
+  .oauth-btn { display: inline-block; padding: 8px 16px; font: inherit;
+    border: 1px solid #1f78b4; border-radius: 4px; background: #fff; color: #1f78b4;
+    text-decoration: none; cursor: pointer; }
+  .oauth-btn:hover { background: #eaf3fa; }
   .skip-link {
     position: absolute; left: -9999px; top: 0;
     background: #1f78b4; color: #fff; padding: 8px 14px; border-radius: 0 0 4px 0;
@@ -550,6 +558,7 @@ __ERROR__
   <input type="password" id="key" name="key" placeholder="Din API-nyckel" autofocus autocomplete="current-password">
   <button type="submit">Logga in</button>
 </form>
+__OAUTH__
 </main>
 </body>
 </html>
@@ -625,9 +634,14 @@ def origo_page(view_id, nonce=""):
     return _ORIGO_PAGE.replace("__VIEW_ID__", view_id).replace("__NONCE__", nonce)
 
 
-def login_page(error=None):
+def login_page(error=None, oauth_enabled=False):
     err = f'<p class="error">{html.escape(error)}</p>' if error else ""
-    return _LOGIN_PAGE.replace("__ERROR__", err)
+    oauth = (
+        '<div class="or" role="separator" aria-label="eller">eller</div>'
+        '<a class="oauth-btn" href="/auth/login">Logga in med OAuth</a>'
+        if oauth_enabled else ""
+    )
+    return _LOGIN_PAGE.replace("__ERROR__", err).replace("__OAUTH__", oauth)
 
 
 def _ws_item(w, csrf):

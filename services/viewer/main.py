@@ -15,6 +15,7 @@ import compile_maplibre
 import compile_origo
 import dbq
 import netauth
+import oauth_client
 import obs
 import page
 import viewer_auth
@@ -32,9 +33,38 @@ DATA_MAX_LIMIT = 50000
 SIMPLIFY_THRESHOLD = 5000
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() not in ("", "0", "false", "no", "off")
+
+
+# Auth cookies (session `gdw_auth` + OAuth state `gdw_oauth`) get the Secure flag by
+# default whenever the public origin is HTTPS — production terminates TLS at the edge
+# (OpenShift Route / Caddy), so the browser hop is HTTPS even though Caddy listens on
+# :80. Overridable via COOKIE_SECURE for a plain-HTTP dev/:80-direct deploy, where a
+# Secure cookie would never be sent back.
+COOKIE_SECURE = _env_bool(
+    "COOKIE_SECURE",
+    os.environ.get("PUBLIC_BASE_URL", "http://localhost:8080").startswith("https://"),
+)
+
+
 @asynccontextmanager
 async def lifespan(_app):
     dbq.get_pool()
+    # Register this viewer as an OAuth client of the MCP authorization server so the
+    # "Logga in med OAuth" flow works (best-effort: never block startup if the OAuth
+    # tables are not created yet — /auth/login re-ensures it lazily).
+    if oauth_client.enabled():
+        try:
+            with dbq.get_pool().connection() as conn:
+                oauth_client.ensure_client(conn)
+            log.info("oauth client registered", extra={"event": "startup"})
+        except Exception:
+            log.warning("oauth client registration deferred", extra={"event": "startup"},
+                        exc_info=True)
     log.info("viewer started", extra={"event": "startup"})
     yield
     dbq.close_pool()
@@ -175,7 +205,7 @@ def index():
 def login_form():
     _require_manager_enabled()
     n = _nonce()
-    return _html(page.login_page(), n)
+    return _html(page.login_page(oauth_enabled=oauth_client.enabled()), n)
 
 
 @app.post("/login", response_class=HTMLResponse)
@@ -187,10 +217,71 @@ def login(key: str = Form("")):
         with dbq.get_pool().connection() as conn:
             key_id = dbq.api_key_id_for_hash(conn, viewer_auth.hash_key(key))
     if key_id is None:
-        return _html(page.login_page("Unknown or disabled API key."), _nonce(), status_code=401)
+        return _html(page.login_page("Okänd eller inaktiverad API-nyckel.",
+                                     oauth_enabled=oauth_client.enabled()),
+                     _nonce(), status_code=401)
     resp = RedirectResponse("/workspaces", status_code=303)
     resp.set_cookie(viewer_auth.COOKIE_NAME, viewer_auth.make_cookie(key_id),
-                    max_age=viewer_auth.COOKIE_TTL_S, httponly=True, samesite="lax")
+                    max_age=viewer_auth.COOKIE_TTL_S, httponly=True, samesite="lax",
+                    secure=COOKIE_SECURE)
+    return resp
+
+
+# ── OAuth login (client of the MCP authorization server; see oauth_client.py) ──
+
+@app.get("/auth/login")
+def auth_login():
+    """Start the OAuth authorization-code + PKCE flow against the MCP OAuth server."""
+    _require_manager_enabled()
+    if not oauth_client.enabled():
+        return RedirectResponse("/login", status_code=302)
+    try:
+        with dbq.get_pool().connection() as conn:
+            oauth_client.ensure_client(conn)
+    except Exception:
+        log.exception("oauth: could not ensure client registration")
+        return _html(page.login_page("OAuth-inloggning är inte tillgänglig just nu.",
+                                     oauth_enabled=True), _nonce(), status_code=503)
+    authorize_url, state_cookie = oauth_client.begin()
+    resp = RedirectResponse(authorize_url, status_code=302)
+    resp.set_cookie(oauth_client.STATE_COOKIE, state_cookie,
+                    max_age=oauth_client.STATE_TTL_S, httponly=True, samesite="lax",
+                    secure=COOKIE_SECURE, path="/")
+    return resp
+
+
+@app.get("/auth/callback", response_class=HTMLResponse)
+def auth_callback(request: Request, code: str = Query(""), state: str = Query(""),
+                  error: str = Query("")):
+    """Handle the redirect back from the MCP OAuth server: verify state, exchange the
+    code for a token, resolve it to the shared api_key principal, and issue the normal
+    viewer session cookie."""
+    _require_manager_enabled()
+
+    def _fail(msg: str, status: int = 400):
+        r = _html(page.login_page(msg, oauth_enabled=oauth_client.enabled()),
+                  _nonce(), status_code=status)
+        r.delete_cookie(oauth_client.STATE_COOKIE, path="/")
+        return r
+
+    if error:
+        return _fail("OAuth-inloggningen avbröts.")
+    verifier = oauth_client.parse_state(
+        request.cookies.get(oauth_client.STATE_COOKIE), state)
+    if not verifier or not code:
+        return _fail("Ogiltig eller utgången inloggningssession. Försök igen.")
+    access = oauth_client.exchange(code, verifier)
+    if not access:
+        return _fail("Kunde inte slutföra OAuth-inloggningen.", status=502)
+    with dbq.get_pool().connection() as conn:
+        key_id = oauth_client.principal_id_for_access(conn, access)
+    if key_id is None:
+        return _fail("OAuth-inloggningen gav ingen giltig identitet.")
+    resp = RedirectResponse("/workspaces", status_code=303)
+    resp.set_cookie(viewer_auth.COOKIE_NAME, viewer_auth.make_cookie(key_id),
+                    max_age=viewer_auth.COOKIE_TTL_S, httponly=True, samesite="lax",
+                    secure=COOKIE_SECURE)
+    resp.delete_cookie(oauth_client.STATE_COOKIE, path="/")
     return resp
 
 

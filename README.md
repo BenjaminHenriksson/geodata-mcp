@@ -83,6 +83,14 @@ Two ways to manage them:
   page lists each workspace's layer count, maps and last use, and can activate, rename or
   delete one — switching there redirects the agent's next tool call, no reconnect needed.
 
+**OAuth login (in addition to API keys).** When `GEODATA_INVITE_CODE` is set, the MCP
+service runs an OAuth 2.1 + PKCE authorization server (invite-code login) — agents can
+authorise with a browser instead of a pasted key. The `/workspaces` UI then also offers
+**"Logga in med OAuth"**: the viewer (`services/viewer/oauth_client.py`) is an OAuth
+client of that same server, and resolves an authorization to the identical `app.api_keys`
+principal the MCP derives (a namespaced SHA-256 of the OAuth subject), so both login
+paths land on the same workspaces. Open standards, no external IdP required (ska-krav #17).
+
 Workspace schemas (`ws_<8 hex>`) are created lazily on first write and deleted only when you
 delete the workspace. There is no idle TTL any more: an hourly worker sweep drops only
 *orphaned* `ws_*` schemas — ones no `app.workspaces` row owns.

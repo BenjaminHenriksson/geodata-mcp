@@ -24,3 +24,6 @@ data:
   EMBED_DIM: {{ .Values.config.embedDim | quote }}
   # SAM3 segmenter endpoint (empty = orthophoto change detection disabled).
   SAM3_URL: {{ .Values.config.sam3Url | quote }}
+  # Internal mcp address for the viewer's server-to-server OAuth token exchange
+  # ("Logga in med OAuth"). GEODATA_INVITE_CODE is delivered via the Secret.
+  MCP_INTERNAL_URL: {{ printf "http://%s:%d" (include "geodata-mcp.mcpHost" .) (int .Values.mcp.service.port) | quote }}

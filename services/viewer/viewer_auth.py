@@ -39,7 +39,10 @@ def parse_cookie(value) -> str | None:
     if not enabled() or not value or not isinstance(value, str):
         return None
     parts = value.rsplit(".", 1)
-    if len(parts) != 2 or not hmac.compare_digest(_sig(parts[0]), parts[1]):
+    # Compare as bytes: hmac.compare_digest raises TypeError on non-ASCII str input,
+    # and the cookie value is attacker-controlled.
+    if len(parts) != 2 or not hmac.compare_digest(
+            _sig(parts[0]).encode("ascii"), parts[1].encode("utf-8")):
         return None
     fields = parts[0].rsplit(".", 1)
     if len(fields) != 2:
@@ -59,4 +62,5 @@ def csrf_token(api_key_id: str) -> str:
 
 
 def csrf_ok(api_key_id: str, token) -> bool:
-    return isinstance(token, str) and hmac.compare_digest(csrf_token(api_key_id), token)
+    return isinstance(token, str) and hmac.compare_digest(
+        csrf_token(api_key_id).encode("ascii"), token.encode("utf-8"))
