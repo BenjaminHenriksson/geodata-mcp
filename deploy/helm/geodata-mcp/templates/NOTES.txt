@@ -1,0 +1,47 @@
+Geodata MCP v2 — {{ .Chart.Name }}-{{ .Chart.Version }} (appVersion {{ .Chart.AppVersion }})
+Release {{ .Release.Name }} deployed to namespace {{ .Release.Namespace }}.
+
+Components:
+  postgres   StatefulSet   {{ include "geodata-mcp.postgresHost" . }}:{{ .Values.postgres.service.port }}   (PostGIS 17 + pgvector + pgaudit)
+  minio      Deployment    {{ include "geodata-mcp.minioHost" . }}:{{ .Values.minio.service.apiPort }}   (S3 exports bucket)
+  mcp        Deployment    {{ include "geodata-mcp.mcpHost" . }}:{{ .Values.mcp.service.port }}   (x{{ .Values.mcp.replicaCount }})   FastMCP /mcp, bearer auth
+  worker     Deployment    {{ include "geodata-mcp.workerHost" . }}:{{ .Values.worker.service.port }}   (x{{ .Values.worker.replicaCount }})   ingestion + /embed
+  viewer     Deployment    {{ include "geodata-mcp.viewerHost" . }}:{{ .Values.viewer.service.port }}   (x{{ .Values.viewer.replicaCount }})   map pages + workspace UI
+  caddy      Deployment    {{ include "geodata-mcp.caddyHost" . }}:{{ .Values.caddy.service.port }}   (x{{ .Values.caddy.replicaCount }})   single public origin
+
+Public URL:
+{{- if .Values.openshift.enabled }}
+  OpenShift Route → https://{{ .Values.ingress.host }}   (TLS: {{ .Values.openshift.route.tls.termination }})
+{{- else if .Values.ingress.enabled }}
+  Ingress → {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+  No Ingress/Route enabled. Reach caddy via port-forward:
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "geodata-mcp.caddyHost" . }} 8080:{{ .Values.caddy.service.port }}
+    open http://localhost:8080/
+{{- end }}
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "geodata-mcp.mcpHost" . }}
+
+Secrets (ska-krav #59):
+{{- if .Values.secrets.existingSecret }}
+  Using buyer-managed Secret: {{ .Values.secrets.existingSecret }}
+{{- else if .Values.secrets.create }}
+  Chart rendered a placeholder Secret ({{ include "geodata-mcp.secretName" . }}).
+  WARNING: rotate every value before this leaves a dev/CI environment. For
+  production set `secrets.existingSecret` to a Secret managed in OpenShift.
+{{- end }}
+
+Bearer auth: clients call /mcp with `Authorization: Bearer <key>` (GEODATA_API_KEYS).
+Workspace manager UI: {{ if .Values.ingress.enabled }}https://{{ .Values.ingress.host }}{{ else }}<origin>{{ end }}/workspaces
+
+{{- if not .Values.postgres.initScriptsConfigMap }}
+
+NOTE (postgres first boot): the geodata-mcp/db image must ship the SQL/shell in
+/docker-entrypoint-initdb.d (db/init/*), or set `postgres.initScriptsConfigMap`
+to a ConfigMap you create from db/init/*. Without it the schema/roles are not
+created on an empty data volume.
+{{- end }}
+
+Metrics (ska-krav #81): {{ if .Values.metrics.enabled }}Prometheus scrape annotations set on mcp/worker/viewer pods (path {{ .Values.metrics.path }}).{{ else }}disabled (metrics.enabled=false).{{ end }}
