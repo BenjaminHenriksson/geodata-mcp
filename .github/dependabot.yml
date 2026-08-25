@@ -1,0 +1,133 @@
+# =============================================================================
+# Dependabot — automatiska, veckovisa beroendeuppdateringar
+# Govtech4all Pilot 3 (Sundsvalls kommun, UH-2026-159)
+#
+# Ska-krav: #36, #49 (håll tredjepartsberoenden uppdaterade och fria från
+# kända sårbarheter). Stödjer #4, #30 (underhållbarhet).
+#
+# Täcker:
+#   - pip            : requirements.txt i services/mcp, services/viewer,
+#                      services/worker
+#   - uv             : services/segmenter (pyproject.toml + uv.lock)
+#   - docker         : basavbilder i varje Dockerfile (db + tjänsterna)
+#   - github-actions : versionerna som används i .github/workflows/
+# =============================================================================
+version: 2
+
+updates:
+  # --- Python-beroenden per tjänst (pip / requirements.txt) -----------------
+  - package-ecosystem: "pip"
+    directory: "/services/mcp"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "service:mcp"
+    groups:
+      mcp-python:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "pip"
+    directory: "/services/viewer"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "service:viewer"
+    groups:
+      viewer-python:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "pip"
+    directory: "/services/worker"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "service:worker"
+    groups:
+      worker-python:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # --- segmenter är ett uv-projekt (pyproject.toml + uv.lock) ----------------
+  - package-ecosystem: "uv"
+    directory: "/services/segmenter"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "service:segmenter"
+    groups:
+      segmenter-python:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # --- Docker-basavbilder per Dockerfile -------------------------------------
+  - package-ecosystem: "docker"
+    directory: "/db"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+
+  - package-ecosystem: "docker"
+    directory: "/services/mcp"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+
+  - package-ecosystem: "docker"
+    directory: "/services/viewer"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+
+  - package-ecosystem: "docker"
+    directory: "/services/worker"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # --- GitHub Actions-versioner i workflows ----------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    groups:
+      actions:
+        patterns:
+          - "*"
