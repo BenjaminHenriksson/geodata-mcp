@@ -1,133 +1,86 @@
 # =============================================================================
-# Dependabot — automatiska, veckovisa beroendeuppdateringar
+# Dependabot — grupperade, månatliga beroendeuppdateringar
 # Govtech4all Pilot 3 (Sundsvalls kommun, UH-2026-159)
 #
-# Ska-krav: #36, #49 (håll tredjepartsberoenden uppdaterade och fria från
-# kända sårbarheter). Stödjer #4, #30 (underhållbarhet).
+# Ska-krav #36/#49 uppfylls av pip-audit + gitleaks + CodeQL i CI och av
+# Dependabot *security updates* (aktiveras i repo-inställningar, oberoende av
+# denna fil). Denna fil styr enbart rutinmässiga *versions*-uppdateringar och
+# är avsiktligt lågmäld för att inte spamma PR-flödet:
 #
-# Täcker:
-#   - pip            : requirements.txt i services/mcp, services/viewer,
-#                      services/worker
-#   - uv             : services/segmenter (pyproject.toml + uv.lock)
-#   - docker         : basavbilder i varje Dockerfile (db + tjänsterna)
-#   - github-actions : versionerna som används i .github/workflows/
+#   * EN grupperad PR per ekosystem (patterns "*", alla update-types)
+#   * månadsvis i stället för veckovis
+#   * högst 1 öppen PR åt gången per post
+#
+# Nödstopp: sätt open-pull-requests-limit: 0 på en post för att stänga av dess
+# versions-PR:er helt (säkerhetsuppdateringar fortsätter ändå).
 # =============================================================================
 version: 2
 
 updates:
-  # --- Python-beroenden per tjänst (pip / requirements.txt) -----------------
+  # --- Python per tjänst (pip / requirements.txt) ---------------------------
   - package-ecosystem: "pip"
     directory: "/services/mcp"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "service:mcp"
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    labels: ["dependencies", "service:mcp"]
     groups:
       mcp-python:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
+        patterns: ["*"]
 
   - package-ecosystem: "pip"
     directory: "/services/viewer"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "service:viewer"
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    labels: ["dependencies", "service:viewer"]
     groups:
       viewer-python:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
+        patterns: ["*"]
 
   - package-ecosystem: "pip"
     directory: "/services/worker"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "service:worker"
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    labels: ["dependencies", "service:worker"]
     groups:
       worker-python:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
+        patterns: ["*"]
 
-  # --- segmenter är ett uv-projekt (pyproject.toml + uv.lock) ----------------
+  # --- segmenter (uv) --------------------------------------------------------
   - package-ecosystem: "uv"
     directory: "/services/segmenter"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "service:segmenter"
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    labels: ["dependencies", "service:segmenter"]
     groups:
       segmenter-python:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
+        patterns: ["*"]
 
-  # --- Docker-basavbilder per Dockerfile -------------------------------------
+  # --- Docker-basavbilder (en grupperad PR för alla Dockerfiles) ------------
   - package-ecosystem: "docker"
-    directory: "/db"
+    directories:
+      - "/db"
+      - "/services/mcp"
+      - "/services/viewer"
+      - "/services/worker"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "docker"
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    labels: ["dependencies", "docker"]
+    groups:
+      docker-base-images:
+        patterns: ["*"]
 
-  - package-ecosystem: "docker"
-    directory: "/services/mcp"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "docker"
-
-  - package-ecosystem: "docker"
-    directory: "/services/viewer"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "docker"
-
-  - package-ecosystem: "docker"
-    directory: "/services/worker"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "docker"
-
-  # --- GitHub Actions-versioner i workflows ----------------------------------
+  # --- GitHub Actions-versioner ---------------------------------------------
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "github-actions"
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    labels: ["dependencies", "github-actions"]
     groups:
       actions:
-        patterns:
-          - "*"
+        patterns: ["*"]
