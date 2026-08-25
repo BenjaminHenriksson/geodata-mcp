@@ -53,10 +53,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checka ut koden
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Sätt upp Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -97,10 +97,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checka ut koden
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Sätt upp Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -136,10 +136,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checka ut koden
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Sätt upp Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -162,7 +162,7 @@ jobs:
 
       - name: Ladda upp SBOM-artefakt
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-cyclonedx
           path: sbom/
@@ -179,7 +179,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checka ut koden
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: docker compose build
         # Obligatoriska ${VAR:?...}-variabler i docker-compose.yml måste ha
@@ -205,7 +205,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checka ut koden (hela historiken)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -221,7 +221,7 @@ jobs:
 
       - name: Ladda upp gitleaks-rapport
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gitleaks-report
           path: gitleaks/
