@@ -1,6 +1,6 @@
 # Ingestion worker: GDAL (ogr2ogr with PostgreSQL/Parquet/WFS drivers) +
 # Python job loop + embedding HTTP service. linux/arm64-compatible base.
-FROM ghcr.io/osgeo/gdal:ubuntu-full-3.8.5
+FROM ghcr.io/osgeo/gdal:ubuntu-full-3.13.3
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
