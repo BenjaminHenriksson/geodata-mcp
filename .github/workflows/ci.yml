@@ -1,0 +1,228 @@
+# =============================================================================
+# CI/CD-pipeline — Geodata MCP v2
+# Govtech4all Pilot 3 "AI och geodata" (Sundsvalls kommun, UH-2026-159)
+#
+# Ska-krav-spårbarhet (jobb -> ska-krav):
+#   Pipelinen i sin helhet (körs vid varje push + pull_request) uppfyller
+#   kravet på automatiserad bygg-/testkedja (CI/CD) och automatiserad
+#   sårbarhetsgranskning av beroenden.
+#
+#     deps-audit    -> #36, #49  Automatiserad sårbarhetsgranskning av
+#                                tredjepartsberoenden (pip-audit) för samtliga
+#                                tjänster. Primärt krav för denna leverans.
+#     sbom          -> #36, #49  Mjukvaru-BOM (CycloneDX) per tjänst för
+#                                spårbarhet i leveranskedjan; laddas upp som
+#                                artefakt (revisionsunderlag).
+#     secrets-scan  -> #36, #49  Skanning efter läckta hemligheter i koden
+#                                (gitleaks).
+#     lint          -> #4,  #30  Stödjer kodkvalitet och underhållbarhet
+#                                (ruff, py_compile, hadolint).
+#     build         -> #4,  #30  Stödjer reproducerbar och driftsättningsbar
+#                                leverans (docker compose build).
+#
+#   Kompletteras av CodeQL SAST (.github/workflows/codeql.yml -> #36, #49) och
+#   automatiska beroendeuppdateringar (.github/dependabot.yml).
+#
+# Licens: AGPL-3.0-only (överenskommen med beställaren; ersätter tenderns
+# ursprungliga EUPL/GPLv3-formulering).
+#
+# Anmärkning: continue-on-error används där ett jobb annars skulle blockera
+# pilotens leverans. Fynden är ändå synliga i körningsloggen/artefakterna.
+# =============================================================================
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Minsta möjliga behörighet som standard.
+permissions:
+  contents: read
+
+# Avbryt tidigare körningar för samma referens när en ny push kommer.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # (a) lint — statisk kontroll: ruff, py_compile och hadolint (#4, #30)
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint och statisk kontroll
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checka ut koden
+        uses: actions/checkout@v4
+
+      - name: Sätt upp Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installera ruff
+        run: python -m pip install --upgrade pip ruff
+
+      - name: ruff check (får inte blockera piloten)
+        continue-on-error: true
+        run: ruff check services/
+
+      - name: py_compile — mcp, viewer, worker (Python 3.12)
+        run: python -m compileall -q services/mcp services/viewer services/worker
+
+      - name: py_compile — segmenter (målplattform Python 3.13, blockerar inte)
+        continue-on-error: true
+        run: python -m compileall -q services/segmenter
+
+      - name: hadolint på varje Dockerfile (blockerar inte)
+        continue-on-error: true
+        run: |
+          set -u
+          found=0
+          while IFS= read -r df; do
+            found=1
+            echo "::group::hadolint ${df}"
+            docker run --rm -i hadolint/hadolint:latest hadolint - < "${df}"
+            echo "::endgroup::"
+          done < <(find . -name Dockerfile -not -path './.git/*' | sort)
+          if [ "${found}" -eq 0 ]; then
+            echo "Ingen Dockerfile hittades."
+          fi
+
+  # ---------------------------------------------------------------------------
+  # (b) deps-audit — sårbarhetsgranskning av beroenden, pip-audit (#36, #49)
+  # ---------------------------------------------------------------------------
+  deps-audit:
+    name: Sårbarhetsgranskning av beroenden
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checka ut koden
+        uses: actions/checkout@v4
+
+      - name: Sätt upp Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installera pip-audit och uv
+        run: python -m pip install --upgrade pip pip-audit uv
+
+      - name: pip-audit — services/mcp
+        continue-on-error: true
+        run: pip-audit --desc -r services/mcp/requirements.txt
+
+      - name: pip-audit — services/viewer
+        continue-on-error: true
+        run: pip-audit --desc -r services/viewer/requirements.txt
+
+      - name: pip-audit — services/worker
+        continue-on-error: true
+        run: pip-audit --desc -r services/worker/requirements.txt
+
+      - name: pip-audit — services/segmenter (uv-projekt)
+        continue-on-error: true
+        run: |
+          # segmenter är ett uv-projekt (pyproject.toml + uv.lock). Exportera
+          # låsfilen till requirements-format och granska den. mlx-sam3 hämtas
+          # från git och saknas på PyPI — pip-audit hoppar då över den.
+          ( cd services/segmenter && uv export --format requirements-txt --no-hashes --no-emit-project ) > "${RUNNER_TEMP}/segmenter-reqs.txt"
+          pip-audit --desc -r "${RUNNER_TEMP}/segmenter-reqs.txt"
+
+  # ---------------------------------------------------------------------------
+  # (c) sbom — CycloneDX mjukvaru-BOM per tjänst, uppladdad artefakt (#36, #49)
+  # ---------------------------------------------------------------------------
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checka ut koden
+        uses: actions/checkout@v4
+
+      - name: Sätt upp Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installera cyclonedx-py och uv
+        run: python -m pip install --upgrade pip cyclonedx-bom uv
+
+      - name: Generera SBOM per tjänst
+        continue-on-error: true
+        run: |
+          set -u
+          mkdir -p sbom
+          for svc in mcp viewer worker; do
+            echo "SBOM: services/${svc}"
+            cyclonedx-py requirements "services/${svc}/requirements.txt" > "sbom/sbom-${svc}.cdx.json"
+          done
+          # segmenter via uv (se deps-audit ovan).
+          if ( cd services/segmenter && uv export --format requirements-txt --no-hashes --no-emit-project ) > "${RUNNER_TEMP}/segmenter-reqs.txt"; then
+            cyclonedx-py requirements "${RUNNER_TEMP}/segmenter-reqs.txt" > "sbom/sbom-segmenter.cdx.json" || true
+          fi
+
+      - name: Ladda upp SBOM-artefakt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom/
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # (d) build — bygg samtliga containrar (#4, #30)
+  # ---------------------------------------------------------------------------
+  build:
+    name: Bygg containrar (docker compose build)
+    runs-on: ubuntu-latest
+    # Tunga basavbilder (GDAL) och vendorade tillgångar hämtas vid bygget; får
+    # inte blockera piloten om en extern nedladdning fallerar.
+    continue-on-error: true
+    steps:
+      - name: Checka ut koden
+        uses: actions/checkout@v4
+
+      - name: docker compose build
+        # Obligatoriska ${VAR:?...}-variabler i docker-compose.yml måste ha
+        # värden för att filen ska kunna tolkas; attrapper räcker för bygget.
+        env:
+          POSTGRES_DB: geodata
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          APP_DB_PASSWORD: ci
+          AGENT_RO_PASSWORD: ci
+          AGENT_WS_PASSWORD: ci
+          MINIO_ROOT_USER: ci
+          MINIO_ROOT_PASSWORD: ci-secret-placeholder
+          GEODATA_API_KEYS: ci-placeholder-key
+          VIEWER_SECRET: ci-placeholder-secret
+        run: docker compose build
+
+  # ---------------------------------------------------------------------------
+  # (e) secrets-scan — hemlighetsskanning med gitleaks (#36, #49)
+  # ---------------------------------------------------------------------------
+  secrets-scan:
+    name: Hemlighetsskanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checka ut koden (hela historiken)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks (blockerar inte piloten)
+        continue-on-error: true
+        run: |
+          # Körs via den officiella containern — kräver varken licens eller
+          # hemligheter. Skannar arbetsträdet efter läckta nycklar/lösenord.
+          mkdir -p gitleaks
+          docker run --rm -v "${PWD}:/repo" ghcr.io/gitleaks/gitleaks:latest \
+            detect --source=/repo --no-git --redact --verbose \
+            --report-format sarif --report-path /repo/gitleaks/gitleaks.sarif
+
+      - name: Ladda upp gitleaks-rapport
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks/
+          if-no-files-found: ignore

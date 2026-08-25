@@ -1,0 +1,50 @@
+# =============================================================================
+# CodeQL SAST — statisk säkerhetsanalys av Python-koden
+# Govtech4all Pilot 3 (Sundsvalls kommun, UH-2026-159)
+#
+# Ska-krav: #36, #49 (automatiserad säkerhetsgranskning). Kompletterar
+# beroendegranskningen i .github/workflows/ci.yml.
+#
+# Körs vid varje pull_request samt schemalagt en gång i veckan så att nya
+# CodeQL-regler upptäcker sårbarheter även utan kodändringar.
+# =============================================================================
+name: CodeQL
+
+on:
+  pull_request:
+  schedule:
+    # Varje måndag 03:17 UTC.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL-analys (python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      # Krävs för privata repon för att CodeQL ska kunna läsa Actions-metadata.
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["python"]
+    steps:
+      - name: Checka ut koden
+        uses: actions/checkout@v4
+
+      - name: Initiera CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Utökade frågeuppsättningar för säkerhet och kvalitet.
+          queries: security-and-quality
+
+      # Python är tolkat — ingen byggfas behövs. analyze utför analysen.
+      - name: Utför CodeQL-analys
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
