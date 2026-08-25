@@ -1,0 +1,58 @@
+{{/*
+OpenShift Route (ska-krav #84 — deploy on the buyer's Red Hat OpenShift).
+Gated by .Values.openshift.enabled. Targets the caddy Service (single public
+origin). TLS terminates at the OpenShift router (ska-krav #34); the platform
+manages the certificate, so no secretName is needed here for edge termination.
+*/}}
+{{- if .Values.openshift.enabled -}}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "geodata-mcp.fullname" . }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "route") | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  host: {{ .Values.ingress.host | quote }}
+  to:
+    kind: Service
+    name: {{ include "geodata-mcp.caddyHost" . }}
+    weight: 100
+  port:
+    targetPort: http
+  {{- with .Values.openshift.route.tls }}
+  tls:
+    termination: {{ .termination }}
+    insecureEdgeTerminationPolicy: {{ .insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+{{- if .Values.ingress.minio.enabled }}
+---
+{{/*
+Route for the MinIO S3 API (presigned export URLs — not proxied through Caddy).
+*/}}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ printf "%s-minio" (include "geodata-mcp.fullname" .) }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "minio-route") | nindent 4 }}
+spec:
+  host: {{ .Values.ingress.minio.host | quote }}
+  to:
+    kind: Service
+    name: {{ include "geodata-mcp.minioHost" . }}
+    weight: 100
+  port:
+    targetPort: api
+  {{- with .Values.openshift.route.tls }}
+  tls:
+    termination: {{ .termination }}
+    insecureEdgeTerminationPolicy: {{ .insecureEdgeTerminationPolicy }}
+  {{- end }}
+  wildcardPolicy: None
+{{- end }}
+{{- end -}}

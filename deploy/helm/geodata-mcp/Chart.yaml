@@ -1,0 +1,30 @@
+apiVersion: v2
+name: geodata-mcp
+description: >-
+  Geodata MCP v2 — PostGIS-backed municipal geodata platform (MCP control plane,
+  ingestion worker, map viewer, MinIO object store, Caddy reverse proxy) for the
+  Sundsvall GovTech Pilot 3 (UH-2026-159). Deploys to Kubernetes / Red Hat
+  OpenShift. Licensed AGPL-3.0-only.
+type: application
+
+# Chart version. Bump on every change to the chart itself.
+version: 0.1.0
+
+# Version of the application shipped by this chart. Used as the default image tag
+# for the app services (mcp, worker, viewer, postgres image) when no explicit tag
+# is set in values.yaml.
+appVersion: "0.1.0"
+
+home: https://github.com/sundsvall/geodata-mcp
+sources:
+  - https://github.com/sundsvall/geodata-mcp
+keywords:
+  - geodata
+  - postgis
+  - mcp
+  - openshift
+  - sundsvall
+  - govtech4all
+maintainers:
+  - name: Spatial Impact / Sundsvalls kommun
+    url: https://github.com/sundsvall/geodata-mcp

@@ -1,0 +1,26 @@
+{{/*
+Non-secret application configuration. Mirrors the shared x-appenv block in
+docker-compose.yml (minus the credentials, which live in the Secret). In-cluster
+service URLs are built from the rendered Service names so they always resolve.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "geodata-mcp.configMapName" . }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "config") | nindent 4 }}
+data:
+  POSTGRES_DB: {{ .Values.config.postgresDb | quote }}
+  POSTGRES_USER: {{ .Values.config.postgresUser | quote }}
+  PUBLIC_BASE_URL: {{ .Values.config.publicBaseUrl | quote }}
+  # In-cluster MinIO API endpoint (app services reach it over the cluster network).
+  S3_ENDPOINT: {{ printf "http://%s:%d" (include "geodata-mcp.minioHost" .) (int .Values.minio.service.apiPort) | quote }}
+  # Public endpoint signed into presigned export URLs (must be reachable externally).
+  S3_PUBLIC_ENDPOINT: {{ .Values.config.s3PublicEndpoint | quote }}
+  S3_BUCKET: {{ .Values.config.s3Bucket | quote }}
+  # Embedding HTTP service lives inside the worker (FastAPI on :8100).
+  EMBED_URL: {{ printf "http://%s:%d/embed" (include "geodata-mcp.workerHost" .) (int .Values.worker.service.port) | quote }}
+  EMBED_MODEL: {{ .Values.config.embedModel | quote }}
+  EMBED_DIM: {{ .Values.config.embedDim | quote }}
+  # SAM3 segmenter endpoint (empty = orthophoto change detection disabled).
+  SAM3_URL: {{ .Values.config.sam3Url | quote }}

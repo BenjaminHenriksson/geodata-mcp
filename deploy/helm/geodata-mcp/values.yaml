@@ -1,0 +1,266 @@
+# Default values for the geodata-mcp Helm chart.
+# Override per environment with `-f my-values.yaml` or `--set key=value`.
+#
+# Ports and env vars mirror docker-compose.yml / CONTRACTS.md exactly:
+#   postgres 5432 · mcp 8000 · viewer 8001 · worker 8100 · minio 9000/9001 · caddy 80
+# One public origin is served by Caddy; the Ingress/Route targets the caddy Service.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# ── Global image settings ─────────────────────────────────────────────────────
+image:
+  # Registry that holds every service image. On OpenShift (often air-gapped),
+  # mirror ALL images — including the postgres base, minio and caddy — into the
+  # buyer's internal registry and point this there.
+  registry: registry.example.com
+  pullPolicy: IfNotPresent
+  # imagePullSecret name(s) for a private registry. Created from the buyer's
+  # OpenShift Secrets (ska-krav #59) and referenced here by name only.
+  pullSecrets: []
+
+# ── OpenShift toggle (ska-krav #84) ───────────────────────────────────────────
+# When enabled, templates/openshift-route.yaml renders a native OpenShift Route.
+# On OpenShift you typically set openshift.enabled=true and ingress.enabled=false
+# (the Route is the first-class ingress object); on plain Kubernetes leave this
+# false and use the Ingress.
+openshift:
+  enabled: false
+  route:
+    tls:
+      # edge | passthrough | reencrypt. TLS terminates at the OpenShift router
+      # and the platform manages the certificate (ska-krav #34).
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+
+# ── ServiceAccount ────────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# ── Pod / container security context ──────────────────────────────────────────
+# Empty by default so OpenShift's restricted-v2 SCC assigns a UID/fsGroup from the
+# namespace range (no hard-coded runAsUser). Override for a plain Kubernetes
+# cluster if a specific UID/fsGroup is required.
+podSecurityContext: {}
+securityContext: {}
+
+# ── Secrets (ska-krav #59) ────────────────────────────────────────────────────
+# Real credentials come from the buyer's OpenShift Secrets. Two modes:
+#   create: true            → this chart renders templates/secret.yaml from the
+#                             placeholders below. Fine for dev/CI — never commit
+#                             real passwords here.
+#   existingSecret: <name>  → reference a Secret the buyer manages out-of-band
+#                             (recommended for production). It MUST carry every
+#                             key listed in templates/secret.yaml, including the
+#                             assembled DATABASE_URL_APP/RO/WS.
+secrets:
+  create: true
+  existingSecret: ""
+  # Placeholders — used only when create: true. Override at deploy time.
+  postgresPassword: "change_me_superuser"
+  appDbPassword: "change_me_app"
+  agentRoPassword: "change_me_ro"
+  agentWsPassword: "change_me_ws"
+  minioRootUser: "geodata"
+  minioRootPassword: "change_me_minio"
+  # MCP bearer keys (comma-separated raw keys). Auth is not optional — the mcp
+  # service refuses to start if this is empty.
+  geodataApiKeys: "change_me_key"
+  # Shared invite code for the OAuth browser-login flow (empty disables OAuth).
+  geodataInviteCode: ""
+  # Signs the viewer workspace-manager login cookie.
+  viewerSecret: "change_me_viewer_secret"
+  # Basic auth for every *.lantmateriet.se host (user:password). Empty = off.
+  lantmaterietCredentials: ""
+  # Per-host auth, comma-separated host=user:password pairs (optional).
+  geodataHttpCredentials: ""
+
+# ── Non-secret application config (ConfigMap) ─────────────────────────────────
+config:
+  postgresDb: geodata
+  postgresUser: postgres
+  # Public origin the map/export tools hand back to agents — the Ingress/Route host.
+  publicBaseUrl: "https://geodata.sundsvall.example.se"
+  # MinIO public endpoint baked into presigned export URLs. Must be reachable by
+  # whoever opens an export link and is part of the URL signature (not proxied
+  # through Caddy). See ingress.minio below.
+  s3PublicEndpoint: "https://s3.geodata.sundsvall.example.se"
+  s3Bucket: exports
+  embedModel: "unsloth/embeddinggemma-300m"
+  embedDim: "256"
+  # Where the worker reaches the SAM3 segmenter. In-cluster there is no
+  # host.docker.internal; point at an external/GPU segmenter endpoint, or leave
+  # empty (orthophoto change detection stays off, everything else runs).
+  sam3Url: ""
+
+# Extra environment variables injected into the app services (list of name/value).
+extraEnv: []
+
+# ── Prometheus metrics (ska-krav #81) ─────────────────────────────────────────
+# Adds prometheus.io scrape annotations to the stateless pods so Prometheus
+# collects /metrics. Requires the /metrics endpoint to be enabled in the service
+# build; /healthz is always available for probes regardless.
+metrics:
+  enabled: true
+  path: /metrics
+
+# ── Ingress (ska-krav #34, TLS) ───────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: ""
+  host: geodata.sundsvall.example.se
+  annotations: {}
+  tls:
+    enabled: true
+    secretName: geodata-mcp-tls
+  # Optional second Ingress for the MinIO S3 API. Presigned export links point at
+  # s3PublicEndpoint and are NOT proxied through Caddy, so they need their own
+  # HTTPS host when exports must be reachable from outside the cluster.
+  minio:
+    enabled: false
+    host: s3.geodata.sundsvall.example.se
+    tls:
+      enabled: true
+      secretName: geodata-mcp-s3-tls
+
+# Rolling-update tuning shared by the stateless Deployments (ska-krav #89 —
+# zero-downtime rollout; #40 — horizontal scaling).
+rollingUpdate:
+  maxSurge: 1
+  maxUnavailable: 0
+
+# ── Per-service settings ──────────────────────────────────────────────────────
+# Capacity requests/limits feed the buyer's resource planning (ska-krav #80).
+
+postgres:
+  image:
+    # Custom PostGIS 17 + pgvector + pgaudit image built from db/Dockerfile.
+    repository: geodata-mcp/db
+    tag: ""            # "" → chart appVersion
+  # Extra postgres flags, mirrored from docker-compose.yml.
+  args:
+    - "-c"
+    - "shared_preload_libraries=pgaudit"
+    - "-c"
+    - "max_connections=120"
+    - "-c"
+    - "shared_buffers=512MB"
+  # First-boot init runs the SQL/shell in /docker-entrypoint-initdb.d. In compose
+  # that directory is a bind mount of db/init; for a container platform it must be
+  # baked into the image (recommended: add `COPY init /docker-entrypoint-initdb.d`
+  # to db/Dockerfile when building geodata-mcp/db) OR delivered via a ConfigMap the
+  # buyer creates from db/init/*. Set that ConfigMap's name here to mount it.
+  initScriptsConfigMap: ""
+  service:
+    port: 5432
+  persistence:
+    size: 20Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+minio:
+  image:
+    registry: ""       # docker.io; set to the buyer's registry to mirror it
+    repository: minio/minio
+    tag: "RELEASE.2025-04-08T15-41-24Z"
+  # console --console-address, mirrored from docker-compose.yml.
+  consoleAddress: ":9001"
+  service:
+    apiPort: 9000
+    consolePort: 9001
+  persistence:
+    size: 50Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+mcp:
+  image:
+    repository: geodata-mcp/mcp
+    tag: ""            # "" → chart appVersion
+  replicaCount: 2
+  # MCP streamable-HTTP keeps an in-memory session per client (spawned at
+  # `initialize`). Pin a client to one pod so a reconnect finds its live session;
+  # durable workspace state lives in Postgres regardless. ska-krav #40/#89.
+  sessionAffinity: ClientIP
+  service:
+    port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+worker:
+  image:
+    repository: geodata-mcp/worker
+    tag: ""            # "" → chart appVersion
+  # The job loop uses SELECT ... FOR UPDATE SKIP LOCKED, so multiple workers are
+  # safe to run; each pod holds its own HF model cache and native resources.
+  replicaCount: 1
+  service:
+    port: 8100
+  # HuggingFace cache for the embedding model (EmbeddingGemma-300M).
+  # emptyDir → weights re-download on restart; enable persistence for a PVC
+  # (RWO — keep replicaCount at 1 when persisting).
+  hfCache:
+    persistence:
+      enabled: false
+      size: 10Gi
+      storageClass: ""
+    sizeLimit: 8Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+viewer:
+  image:
+    repository: geodata-mcp/viewer
+    tag: ""            # "" → chart appVersion
+  replicaCount: 2
+  service:
+    port: 8001
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+caddy:
+  image:
+    registry: ""       # docker.io; set to the buyer's registry to mirror it
+    repository: caddy
+    tag: "2-alpine"
+  replicaCount: 2
+  service:
+    port: 80
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

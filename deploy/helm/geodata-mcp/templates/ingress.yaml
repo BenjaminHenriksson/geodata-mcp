@@ -1,0 +1,79 @@
+{{/*
+Kubernetes Ingress (ska-krav #34 — TLS at the edge). Targets the caddy Service,
+which is the single public origin. On OpenShift you normally use the native Route
+(openshift.enabled=true) instead of this Ingress; the OpenShift Router will also
+honour a plain Ingress if you prefer.
+*/}}
+{{- if .Values.ingress.enabled -}}
+{{- $caddySvc := include "geodata-mcp.caddyHost" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "geodata-mcp.fullname" . }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "ingress") | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $caddySvc }}
+                port:
+                  number: {{ .Values.caddy.service.port }}
+{{- end -}}
+{{- if and .Values.ingress.enabled .Values.ingress.minio.enabled }}
+---
+{{/*
+Optional public Ingress for the MinIO S3 API. Presigned export URLs point at
+config.s3PublicEndpoint and are NOT proxied through Caddy (they are part of the
+signature), so they need their own TLS host to be reachable externally.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ printf "%s-minio" (include "geodata-mcp.fullname" .) }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "minio-ingress") | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.minio.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.minio.host | quote }}
+      secretName: {{ .Values.ingress.minio.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.minio.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "geodata-mcp.minioHost" . }}
+                port:
+                  number: {{ .Values.minio.service.apiPort }}
+{{- end -}}

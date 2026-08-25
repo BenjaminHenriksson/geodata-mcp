@@ -1,0 +1,132 @@
+{{/*
+Caddy — single public origin / reverse proxy (:80). Routes mirror deploy/Caddyfile:
+  /mcp*                     → mcp:8000  (streamable HTTP, no buffering)
+  /oauth/*                  → mcp:8000  (OAuth authorization server)
+  /.well-known/oauth-*      → mcp:8000  (OAuth discovery)
+  everything else           → viewer:8001
+The Ingress / OpenShift Route targets this Service. Stateless → RollingUpdate.
+*/}}
+{{- $svcName := include "geodata-mcp.caddyHost" . -}}
+{{- $mcpUpstream := printf "%s:%d" (include "geodata-mcp.mcpHost" .) (int .Values.mcp.service.port) -}}
+{{- $viewerUpstream := printf "%s:%d" (include "geodata-mcp.viewerHost" .) (int .Values.viewer.service.port) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-caddyfile" $svcName }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "caddy") | nindent 4 }}
+data:
+  Caddyfile: |
+    :80 {
+    	handle /mcp* {
+    		reverse_proxy {{ $mcpUpstream }} {
+    			lb_try_duration 10s
+    			lb_try_interval 500ms
+    			# MCP streamable-HTTP responses must not be buffered
+    			flush_interval -1
+    		}
+    	}
+    	handle /oauth/* {
+    		reverse_proxy {{ $mcpUpstream }} {
+    			lb_try_duration 10s
+    			lb_try_interval 500ms
+    		}
+    	}
+    	handle /.well-known/oauth-* {
+    		reverse_proxy {{ $mcpUpstream }} {
+    			lb_try_duration 10s
+    			lb_try_interval 500ms
+    		}
+    	}
+    	handle {
+    		reverse_proxy {{ $viewerUpstream }} {
+    			lb_try_duration 10s
+    			lb_try_interval 500ms
+    		}
+    	}
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svcName }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "caddy") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.caddy.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "geodata-mcp.componentSelectorLabels" (dict "root" $ "component" "caddy") | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svcName }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "caddy") | nindent 4 }}
+spec:
+  replicas: {{ .Values.caddy.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ .Values.rollingUpdate.maxSurge }}
+      maxUnavailable: {{ .Values.rollingUpdate.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "geodata-mcp.componentSelectorLabels" (dict "root" $ "component" "caddy") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "caddy") | nindent 8 }}
+      annotations:
+        # Roll the pods when the Caddyfile changes.
+        checksum/caddyfile: {{ printf "%s|%s" $mcpUpstream $viewerUpstream | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "geodata-mcp.serviceAccountName" . }}
+      {{- include "geodata-mcp.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: caddy
+          image: {{ include "geodata-mcp.image" (dict "svc" .Values.caddy "root" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.caddy.service.port }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: caddyfile
+              mountPath: /etc/caddy/Caddyfile
+              subPath: Caddyfile
+              readOnly: true
+          resources:
+            {{- toYaml .Values.caddy.resources | nindent 12 }}
+      volumes:
+        - name: caddyfile
+          configMap:
+            name: {{ printf "%s-caddyfile" $svcName }}

@@ -1,0 +1,124 @@
+{{/*
+Worker — ingestion job loop (GDAL/ogr2ogr connectors) + embedding HTTP service
+(FastAPI /embed, /healthz on :8100). A ClusterIP Service is required so the mcp
+and viewer services can resolve EMBED_URL (http://<worker>:8100/embed).
+The job loop uses FOR UPDATE SKIP LOCKED, so replicas scale safely; each pod
+holds its own HuggingFace model cache. Stateless per request → RollingUpdate.
+*/}}
+{{- $svcName := include "geodata-mcp.workerHost" . -}}
+{{- if .Values.worker.hfCache.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ printf "%s-hf-cache" $svcName }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "worker") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.worker.hfCache.persistence.storageClass }}
+  storageClassName: {{ .Values.worker.hfCache.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.worker.hfCache.persistence.size | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svcName }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "worker") | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.worker.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "geodata-mcp.componentSelectorLabels" (dict "root" $ "component" "worker") | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svcName }}
+  labels:
+    {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: {{ .Values.rollingUpdate.maxSurge }}
+      maxUnavailable: {{ .Values.rollingUpdate.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "geodata-mcp.componentSelectorLabels" (dict "root" $ "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "geodata-mcp.componentLabels" (dict "root" $ "component" "worker") | nindent 8 }}
+      {{- if .Values.metrics.enabled }}
+      annotations:
+        {{- include "geodata-mcp.metricsAnnotations" (dict "root" $ "port" .Values.worker.service.port) | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "geodata-mcp.serviceAccountName" . }}
+      {{- include "geodata-mcp.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "geodata-mcp.image" (dict "svc" .Values.worker "root" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.worker.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "geodata-mcp.configMapName" . }}
+            - secretRef:
+                name: {{ include "geodata-mcp.secretName" . }}
+          {{- with .Values.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: hf-cache
+              mountPath: /root/.cache/huggingface
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+      volumes:
+        - name: hf-cache
+          {{- if .Values.worker.hfCache.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ printf "%s-hf-cache" $svcName }}
+          {{- else }}
+          emptyDir:
+            sizeLimit: {{ .Values.worker.hfCache.sizeLimit | quote }}
+          {{- end }}
