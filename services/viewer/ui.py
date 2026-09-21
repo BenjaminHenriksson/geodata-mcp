@@ -114,7 +114,7 @@ font:inherit;line-height:1.4;border:1px solid #afbdc7;background:white;color:var
 .map-toolbar .renderer-nav a[aria-current=page]{color:#145d8c;background:#e5f1f9;font-weight:600}
 .map-stage{position:relative;flex:1;min-height:0}
 @media(max-width:680px){
-.app-bar{padding:10px 16px;gap:8px 16px}.app-nav{gap:2px;order:3;flex-basis:100%;overflow:auto;flex-wrap:nowrap}
+.app-bar{padding:10px 16px;gap:8px 16px}.app-nav{gap:2px;order:3;flex-basis:100%;flex-wrap:wrap}
 .app-header .app-nav a{padding:5px 8px;white-space:nowrap}.identity{display:none}.account{margin-left:auto}
 .app-main{padding:22px 16px 36px}.app-page h1{font-size:23px}.panel{padding:16px}
 .metrics{gap:12px 22px}.metrics dd{font-size:20px}
