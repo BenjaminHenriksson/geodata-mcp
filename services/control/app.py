@@ -82,7 +82,8 @@ class Controller:
 
     def inspect(self, key, target):
         row = {"id": key, "name": target["name"], "kind": target["kind"],
-               "actions": target.get("actions", []), "state": "unknown", "health": "unknown"}
+               "actions": [] if target.get("disabled_reason") else target.get("actions", []),
+               "disabled_reason": target.get("disabled_reason"), "state": "unknown", "health": "unknown"}
         if target["kind"] == "docker":
             ident = self.docker_id(target)
             data = json.loads(command(["docker", "inspect", ident]))[0]
@@ -107,7 +108,7 @@ class Controller:
                 row["memory_bytes"] = int(data["MemoryCurrent"])
             if data.get("CPUUsageNSec", "").isdigit():
                 row["cpu_seconds"] = int(data["CPUUsageNSec"]) / 1e9
-        if target.get("health_url"):
+        if target.get("health_url") and not target.get("disabled_reason"):
             start = time.monotonic()
             try:
                 with (httpx.Client(timeout=2, trust_env=False, follow_redirects=False) as client,
@@ -141,7 +142,8 @@ class Controller:
                 except (subprocess.SubprocessError, OSError, LookupError, ValueError, TypeError):
                     rows.append({"id": key, "name": target["name"], "kind": target["kind"],
                                  "state": "unknown", "health": "unknown",
-                                 "actions": target.get("actions", [])})
+                                 "actions": [] if target.get("disabled_reason") else target.get("actions", []),
+                                 "disabled_reason": target.get("disabled_reason")})
             ids = [r.pop("_container_id", None) for r in rows]
             running = [i for i in ids if i]
             if running:
@@ -166,7 +168,7 @@ class Controller:
 
     def submit(self, request):
         target = self.targets.get(request.service)
-        if target is None or request.action not in target.get("actions", []):
+        if target is None or target.get("disabled_reason") or request.action not in target.get("actions", []):
             raise HTTPException(403, "action not allowed")
         with self.lock, self.db() as conn:
             existing = conn.execute("SELECT * FROM actions WHERE id=?", (str(request.id),)).fetchone()

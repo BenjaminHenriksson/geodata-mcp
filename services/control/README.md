@@ -44,6 +44,10 @@ environment variables, raw process output nor container logs are returned by the
 If the controller is unavailable, the page reports that fact rather than showing a
 healthy status. Other dashboard and map routes remain independent of the controller.
 
+Set a target's `disabled_reason` to explain an intentional shutdown. It suppresses
+health probes and blocks all start/restart actions, even if actions are also listed.
+This does not stop a running process; disable its host unit separately.
+
 The standard allowlist enables maintenance for MCP, worker, viewer and SAM3.
 PostgreSQL, object storage and the proxy are monitored only. Eneo and other Docker
 projects are outside the allowlist. The page refreshes on demand and snapshots are

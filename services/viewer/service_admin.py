@@ -11,7 +11,7 @@ LABELS = {
     "running": "Körs", "active": "Körs", "exited": "Stoppad", "inactive": "Stoppad",
     "dead": "Stoppad", "failed": "Fel", "restarting": "Startar om", "activating": "Startar",
     "created": "Skapad", "paused": "Pausad", "unknown": "Okänd",
-    "healthy": "OK", "unhealthy": "Fel", "starting": "Startar", "none": "Saknas",
+    "disabled": "Avstängd", "healthy": "OK", "unhealthy": "Fel", "starting": "Startar", "none": "Saknas",
     "unreachable": "Nås inte", "queued": "Väntar", "success": "Utförd", "error": "Misslyckades",
 }
 ACTIONS = {"start": "Starta", "restart": "Starta om"}
@@ -78,8 +78,9 @@ def service_page(data, principal, csrf, error=None, accepted=False):
         body += f'<p class="caption">Kontrollerad {stamp(data["checked_at"])} UTC</p>'
         body += '<div class="services-grid">'
         for s in data["services"]:
+            state = "disabled" if s.get("disabled_reason") and s["state"] in ("inactive", "exited", "dead") else s["state"]
             body += ('<section class="panel service"><div class="section-title">'
-                     f'<h2>{e(s["name"])}</h2>{badge(s["state"])}</div>'
+                     f'<h2>{e(s["name"])}</h2>{badge(state)}</div>'
                      '<dl class="detail-grid">')
             details = [("Typ", "Container" if s["kind"] == "docker" else "Värdtjänst")]
             if s.get("state") in ("running", "active"):
@@ -111,7 +112,11 @@ def service_page(data, principal, csrf, error=None, accepted=False):
             if technical:
                 body += '<details class="metadata"><summary>Detaljer</summary><dl class="detail-grid">'
                 body += "".join(f'<dt>{e(k)}</dt><dd>{e(v)}</dd>' for k, v in technical) + '</dl></details>'
-            actions = s.get("actions", [])
+            if s.get("disabled_reason"):
+                body += f'<p class="caption">{e(s["disabled_reason"])}</p>'
+                if s["state"] in ("active", "running"):
+                    body += '<p class="alert">Körs trots avstängning.</p>'
+            actions = [] if s.get("disabled_reason") else s.get("actions", [])
             current_action = "start" if s["state"] in ("exited", "inactive", "dead", "failed", "created") else "restart"
             if current_action in actions:
                 label = ACTIONS[current_action]
@@ -123,7 +128,7 @@ def service_page(data, principal, csrf, error=None, accepted=False):
                          f'<input type="hidden" name="service" value="{e(s["id"])}">'
                          f'<input type="hidden" name="action" value="{current_action}">'
                          f'<button type="submit" class="danger">{label} {e(s["name"])}</button></form></details>')
-            else:
+            elif not s.get("disabled_reason"):
                 body += '<span class="caption">Övervakning</span>'
             body += '</section>'
         body += '</div><section class="panel"><div class="section-title"><h2>Underhållslogg</h2><span class="caption">UTC</span></div>'
