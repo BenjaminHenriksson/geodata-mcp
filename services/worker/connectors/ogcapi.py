@@ -45,8 +45,6 @@ def harvest_ogcapi(conn, job) -> dict:
     """Job handler: OGC API Features /collections → one catalog dataset (kind
     'vector') per collection, upserted on (source_id, external_id)."""
     source = _get_source(conn, job["payload"]["source_id"])
-    if not source["url"]:
-        raise ValueError(f"source {source['slug']} has no url")
 
     collections = []
     next_url = source["url"].rstrip("/") + "/collections"

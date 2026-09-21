@@ -44,8 +44,6 @@ def harvest_wmts(conn, job) -> dict:
     """Job handler: WMTS 1.0.0 GetCapabilities → one catalog dataset (kind
     'raster_ref') per Layer, tile-grid metadata in schema_summary."""
     source = _get_source(conn, job["payload"]["source_id"])
-    if not source["url"]:
-        raise ValueError(f"source {source['slug']} has no url")
     root = _fetch_capabilities(
         source["url"],
         {"service": "WMTS", "request": "GetCapabilities", "version": "1.0.0"},

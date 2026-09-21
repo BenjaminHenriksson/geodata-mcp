@@ -5,11 +5,8 @@ import bisect
 import logging
 import os
 
-from psycopg.types.json import Json
-
-import dbutil
-import embedder
 from connectors import files
+from connectors.documents import store_document
 
 log = logging.getLogger("worker.pdf")
 
@@ -119,8 +116,6 @@ def ingest_pdf(conn, job) -> dict:
     url = payload.get("url")
     if not url:
         raise ValueError("ingest_pdf payload requires url")
-    title = payload.get("title") or url
-    dataset_id = payload.get("dataset_id")
 
     tmp_path = f"/tmp/ingest_pdf_{job['id']}.pdf"
     try:
@@ -137,57 +132,8 @@ def ingest_pdf(conn, job) -> dict:
     total_chars = sum(len(text) for _, text in pages)
     chunks = _chunk_pages(pages)
 
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO doc.documents (dataset_id, source_url, title, pages, meta)
-            VALUES (%s::uuid, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (
-                str(dataset_id) if dataset_id else None,
-                url,
-                title,
-                len(pages),
-                Json({"empty_pages": empty_pages}),
-            ),
-        )
-        document_id = cur.fetchone()["id"]
-
-        chunk_ids = []
-        for index, (page_no, text) in enumerate(chunks):
-            cur.execute(
-                """
-                INSERT INTO doc.chunks (document_id, page, chunk_index, text)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
-                """,
-                (document_id, page_no, index, text),
-            )
-            chunk_ids.append(cur.fetchone()["id"])
-    conn.commit()  # document + chunks exist even if embedding fails below
-
-    # Embed the chunks with the local model (task 'document'), batch 32.
-    batch = embedder.BATCH_SIZE
-    for offset in range(0, len(chunks), batch):
-        chunk_batch = chunks[offset : offset + batch]
-        id_batch = chunk_ids[offset : offset + batch]
-        vecs = embedder.embed_texts([text for _, text in chunk_batch], "document")
-        with conn.cursor() as cur:
-            cur.executemany(
-                """
-                UPDATE doc.chunks
-                   SET embedding = %s::vector, embedding_model = %s
-                 WHERE id = %s
-                """,
-                [
-                    (dbutil.vector_literal(vec), embedder.EMBED_MODEL, chunk_id)
-                    for vec, chunk_id in zip(vecs, id_batch)
-                ],
-            )
-        conn.commit()
-
-    result = {"document_id": str(document_id), "chunks": len(chunks)}
+    result = store_document(conn, payload, chunks, pages=len(pages),
+                            meta={"empty_pages": empty_pages})
     if total_chars < MIN_TEXT_CHARS:
         result["warning"] = "scanned PDF — no text layer; OCR model deferred by decision"
     return result

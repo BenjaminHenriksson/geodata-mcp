@@ -49,6 +49,8 @@ def _get_source(conn, source_id):
         row = cur.fetchone()
     if row is None:
         raise ValueError(f"unknown source_id: {source_id}")
+    if not row["url"]:
+        raise ValueError(f"source {row['slug']} has no url")
     return row
 
 
@@ -129,8 +131,6 @@ def harvest_wfs(conn, job) -> dict:
     """Job handler: WFS 2.0.0 GetCapabilities → one catalog dataset (kind
     'vector') per FeatureType, upserted on (source_id, external_id)."""
     source = _get_source(conn, job["payload"]["source_id"])
-    if not source["url"]:
-        raise ValueError(f"source {source['slug']} has no url")
     root = _fetch_capabilities(
         source["url"],
         {"service": "WFS", "request": "GetCapabilities", "version": "2.0.0"},
@@ -189,8 +189,6 @@ def harvest_wms(conn, job) -> dict:
     """Job handler: WMS 1.3.0 GetCapabilities → one catalog dataset (kind
     'raster_ref') per *named* Layer."""
     source = _get_source(conn, job["payload"]["source_id"])
-    if not source["url"]:
-        raise ValueError(f"source {source['slug']} has no url")
     root = _fetch_capabilities(
         source["url"],
         {"service": "WMS", "request": "GetCapabilities", "version": "1.3.0"},

@@ -71,73 +71,41 @@ def _dataset_text(row) -> str:
     return text or " "
 
 
-def _batches(items, size=BATCH_SIZE):
-    for i in range(0, len(items), size):
-        yield items[i : i + size]
+def embed_rows(conn, rows, *, catalog=False) -> int:
+    """Embed catalog records or document chunks, committing each completed batch."""
+    table = "catalog.datasets" if catalog else "doc.chunks"
+    updated_at = ", updated_at = now()" if catalog else ""
+    for offset in range(0, len(rows), BATCH_SIZE):
+        batch = rows[offset:offset + BATCH_SIZE]
+        texts = [_dataset_text(row) if catalog else row["text"] for row in batch]
+        vecs = embed_texts(texts, "document")
+        with conn.cursor() as cur:
+            cur.executemany(
+                f"""UPDATE {table}
+                       SET embedding = %s::vector, embedding_model = %s{updated_at}
+                     WHERE id = %s""",
+                [(dbutil.vector_literal(vec), EMBED_MODEL, row["id"])
+                 for row, vec in zip(batch, vecs)],
+            )
+        conn.commit()
+    return len(rows)
 
 
 def embed_catalog(conn, job) -> dict:
-    """Job handler: embed catalog.datasets and doc.chunks that are missing an
-    embedding or were embedded with a different model."""
-    datasets_embedded = 0
-    chunks_embedded = 0
-
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT id, title, description, keywords
-              FROM catalog.datasets
-             WHERE embedding IS NULL OR embedding_model IS DISTINCT FROM %s
-             ORDER BY created_at
-            """,
-            (EMBED_MODEL,),
-        )
-        dataset_rows = cur.fetchall()
-
-    for batch in _batches(dataset_rows):
-        vecs = embed_texts([_dataset_text(r) for r in batch], "document")
+    """Embed missing or model-mismatched catalog records and document chunks."""
+    counts = {}
+    for table, columns, order in (
+        ("catalog.datasets", "id, title, description, keywords", "created_at"),
+        ("doc.chunks", "id, text", "id"),
+    ):
         with conn.cursor() as cur:
-            cur.executemany(
-                """
-                UPDATE catalog.datasets
-                   SET embedding = %s::vector, embedding_model = %s, updated_at = now()
-                 WHERE id = %s
-                """,
-                [
-                    (dbutil.vector_literal(vec), EMBED_MODEL, row["id"])
-                    for row, vec in zip(batch, vecs)
-                ],
+            cur.execute(
+                f"""SELECT {columns} FROM {table}
+                     WHERE embedding IS NULL OR embedding_model IS DISTINCT FROM %s
+                     ORDER BY {order}""",
+                (EMBED_MODEL,),
             )
-        conn.commit()  # persist progress batch-by-batch
-        datasets_embedded += len(batch)
-
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT id, text
-              FROM doc.chunks
-             WHERE embedding IS NULL OR embedding_model IS DISTINCT FROM %s
-             ORDER BY id
-            """,
-            (EMBED_MODEL,),
-        )
-        chunk_rows = cur.fetchall()
-
-    for batch in _batches(chunk_rows):
-        vecs = embed_texts([r["text"] for r in batch], "document")
-        with conn.cursor() as cur:
-            cur.executemany(
-                """
-                UPDATE doc.chunks
-                   SET embedding = %s::vector, embedding_model = %s
-                 WHERE id = %s
-                """,
-                [
-                    (dbutil.vector_literal(vec), EMBED_MODEL, row["id"])
-                    for row, vec in zip(batch, vecs)
-                ],
-            )
-        conn.commit()
-        chunks_embedded += len(batch)
-
-    return {"datasets_embedded": datasets_embedded, "chunks_embedded": chunks_embedded}
+            rows = cur.fetchall()
+        counts[table.split(".")[1] + "_embedded"] = embed_rows(
+            conn, rows, catalog=table == "catalog.datasets")
+    return counts

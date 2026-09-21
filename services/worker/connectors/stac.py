@@ -9,7 +9,7 @@ in schema_summary."""
 
 import logging
 
-from connectors.ogcapi import _get_json
+from connectors.ogcapi import _get_json, _spatial_bbox
 from connectors.wfs import _get_source, _upsert_dataset, _valid_bbox
 
 log = logging.getLogger("worker.stac")
@@ -19,24 +19,10 @@ MAX_COLLECTIONS = 500
 MAX_ASSETS = 20
 
 
-def _stac_bbox(collection: dict):
-    boxes = ((collection.get("extent") or {}).get("spatial") or {}).get("bbox") or []
-    if not boxes or not isinstance(boxes[0], (list, tuple)):
-        return None
-    b = boxes[0]
-    if len(b) >= 6:
-        return (b[0], b[1], b[3], b[4])
-    if len(b) >= 4:
-        return (b[0], b[1], b[2], b[3])
-    return None
-
-
 def harvest_stac(conn, job) -> dict:
     """Job handler: STAC /collections → one catalog dataset (kind 'raster_ref')
     per collection, upserted on (source_id, external_id)."""
     source = _get_source(conn, job["payload"]["source_id"])
-    if not source["url"]:
-        raise ValueError(f"source {source['slug']} has no url")
 
     collections = []
     next_url = source["url"].rstrip("/") + "/collections"
@@ -68,7 +54,7 @@ def harvest_stac(conn, job) -> dict:
             description = coll.get("description") or ""
             keywords = [k for k in coll.get("keywords") or [] if isinstance(k, str)]
 
-            raw_bbox = _stac_bbox(coll)
+            raw_bbox = _spatial_bbox(coll)
             temporal = ((coll.get("extent") or {}).get("temporal") or {}).get("interval") or []
             assets = coll.get("item_assets") or {}
             summary = {"stac": {

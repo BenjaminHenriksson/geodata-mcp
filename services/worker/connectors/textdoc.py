@@ -10,11 +10,8 @@ import logging
 import os
 from html.parser import HTMLParser
 
-from psycopg.types.json import Json
-
-import dbutil
-import embedder
 from connectors import files
+from connectors.documents import store_document
 from connectors.pdf import CHUNK_OVERLAP, CHUNK_SIZE, MIN_TEXT_CHARS, _chunk_pages
 
 log = logging.getLogger("worker.textdoc")
@@ -90,8 +87,6 @@ def ingest_text(conn, job) -> dict:
     url = payload.get("url")
     if not url:
         raise ValueError("ingest_text payload requires url")
-    title = payload.get("title") or url
-    dataset_id = payload.get("dataset_id")
 
     tmp_path = f"/tmp/ingest_text_{job['id']}"
     try:
@@ -109,50 +104,9 @@ def ingest_text(conn, job) -> dict:
     text, fmt = _to_plain_text(raw)
     chunks = _chunk_pages([(None, text)], size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
 
-    with conn.cursor() as cur:
-        cur.execute("DELETE FROM doc.documents WHERE source_url = %s", (url,))
-        cur.execute(
-            """
-            INSERT INTO doc.documents (dataset_id, source_url, title, pages, meta)
-            VALUES (%s::uuid, %s, %s, NULL, %s)
-            RETURNING id
-            """,
-            (str(dataset_id) if dataset_id else None, url, title,
-             Json({"format": fmt, "chars": len(text)})),
-        )
-        document_id = cur.fetchone()["id"]
-        chunk_ids = []
-        for index, (_page, chunk_text) in enumerate(chunks):
-            cur.execute(
-                """
-                INSERT INTO doc.chunks (document_id, page, chunk_index, text)
-                VALUES (%s, NULL, %s, %s)
-                RETURNING id
-                """,
-                (document_id, index, chunk_text),
-            )
-            chunk_ids.append(cur.fetchone()["id"])
-    conn.commit()  # document + chunks exist even if embedding fails below
-
-    batch = embedder.BATCH_SIZE
-    for offset in range(0, len(chunks), batch):
-        chunk_batch = chunks[offset:offset + batch]
-        id_batch = chunk_ids[offset:offset + batch]
-        vecs = embedder.embed_texts([t for _, t in chunk_batch], "document")
-        with conn.cursor() as cur:
-            cur.executemany(
-                """
-                UPDATE doc.chunks
-                   SET embedding = %s::vector, embedding_model = %s
-                 WHERE id = %s
-                """,
-                [(dbutil.vector_literal(vec), embedder.EMBED_MODEL, chunk_id)
-                 for vec, chunk_id in zip(vecs, id_batch)],
-            )
-        conn.commit()
-
-    result = {"document_id": str(document_id), "chunks": len(chunks),
-              "chars": len(text), "format": fmt}
+    result = store_document(conn, payload, chunks,
+                            meta={"format": fmt, "chars": len(text)}, replace=True)
+    result.update(chars=len(text), format=fmt)
     if len(text) < MIN_TEXT_CHARS:
         result["warning"] = "very little visible text extracted from this page"
     return result
