@@ -3,6 +3,7 @@ and the auth-gated workspace manager UI."""
 import logging
 import os
 import secrets
+from uuid import UUID
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -14,10 +15,13 @@ from fastapi.staticfiles import StaticFiles
 import api_docs as api
 import compile_maplibre
 import compile_origo
+import dashboard_data
+import dashboard_page
 import dbq
 from geodata_common import netauth
 import obs
 import page
+import service_admin
 import viewer_auth
 
 # Centralised observability (#81): structured JSON logs to stdout. Additive and
@@ -90,7 +94,9 @@ def _html(body: str, nonce: str, status_code: int = 200,
         "Content-Security-Policy": _CSP.format(
             nonce=nonce, eval=" 'unsafe-eval'" if allow_eval else ""),
         "X-Content-Type-Options": "nosniff",
-        "Referrer-Policy": "no-referrer",
+        # Identify the public site to the basemap provider without disclosing
+        # capability-bearing view paths or query parameters.
+        "Referrer-Policy": "strict-origin",
     })
 
 
@@ -178,10 +184,10 @@ def _require_manager_enabled():
                             detail="workspace manager disabled — set VIEWER_SECRET in .env")
 
 
-@app.get("/", tags=["manager"], summary="Redirect to the workspace manager",
+@app.get("/", tags=["manager"], summary="Redirect to the dashboard",
          response_class=RedirectResponse, status_code=302)
 def index():
-    return RedirectResponse("/workspaces", status_code=302)
+    return RedirectResponse("/dashboard", status_code=302)
 
 
 @app.get("/login", tags=["manager"], summary="API-key sign-in form",
@@ -194,7 +200,7 @@ def login_form():
 
 @app.post("/login", tags=["manager"], summary="Sign in", response_class=RedirectResponse,
           status_code=303, responses={**api.MANAGER_DISABLED,
-              303: {"description": "Set signed gdw_auth cookie and redirect to /workspaces."},
+              303: {"description": "Set signed gdw_auth cookie and redirect to /dashboard."},
               401: api.content("Unknown or disabled API key; login page.", "text/html", {"type": "string"})})
 def login(key: str = Form("", description="API key used as the MCP bearer token; never stored in the cookie.")):
     _require_manager_enabled()
@@ -204,8 +210,8 @@ def login(key: str = Form("", description="API key used as the MCP bearer token;
         with dbq.get_pool().connection() as conn:
             key_id = dbq.api_key_id_for_hash(conn, viewer_auth.hash_key(key))
     if key_id is None:
-        return _html(page.login_page("Unknown or disabled API key."), _nonce(), status_code=401)
-    resp = RedirectResponse("/workspaces", status_code=303)
+        return _html(page.login_page("Okänd eller inaktiverad API-nyckel."), _nonce(), status_code=401)
+    resp = RedirectResponse("/dashboard", status_code=303)
     resp.set_cookie(viewer_auth.COOKIE_NAME, viewer_auth.make_cookie(key_id),
                     max_age=viewer_auth.COOKIE_TTL_S, httponly=True, samesite="lax")
     return resp
@@ -228,7 +234,8 @@ def workspaces(request: Request):
         return RedirectResponse("/login", status_code=302)
     with dbq.get_pool().connection() as conn:
         rows = dbq.workspaces_for_key(conn, key_id)
-    return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id)), _nonce())
+        principal = dashboard_data.principal(conn, key_id)
+    return _dashboard_response(page.workspaces_page(rows, viewer_auth.csrf_token(key_id), principal=principal))
 
 
 @app.post("/workspaces/action", tags=["manager"], summary="Activate, rename or delete an owned workspace",
@@ -252,7 +259,7 @@ def workspaces_action(request: Request, action: str = Form("", description="acti
     with dbq.get_pool().connection() as conn:
         row = dbq.workspace_owned(conn, key_id, workspace_id)
         if row is None:
-            error = "unknown workspace"
+            error = "Arbetsytan finns inte."
         elif action == "activate":
             dbq.activate_workspace(conn, key_id, row[0])
         elif action == "rename":
@@ -260,12 +267,148 @@ def workspaces_action(request: Request, action: str = Form("", description="acti
         elif action == "delete":
             dbq.delete_workspace(conn, key_id, row[0], row[2])
         else:
-            error = "unknown action"
+            error = "Okänd åtgärd."
         if error:
             rows = dbq.workspaces_for_key(conn, key_id)
-            return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id), error=error),
+            return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id), error=error,
+                                                principal=dashboard_data.principal(conn, key_id)),
                          _nonce(), status_code=400)
     return RedirectResponse("/workspaces", status_code=303)
+
+
+# Dashboard pages use the same signed cookie as the workspace manager. Admin status
+# is read from the database on every request, never accepted from the browser.
+def _dashboard_principal(request):
+    _require_manager_enabled()
+    key_id = _manager_key_id(request)
+    if key_id is None:
+        return None
+    with dbq.get_pool().connection() as conn:
+        return dashboard_data.principal(conn, key_id)
+
+
+def _dashboard_response(body):
+    response = _html(body, _nonce())
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+@app.get("/dashboard", response_class=HTMLResponse, tags=["manager"],
+         summary="Workspace overview", dependencies=api.MANAGER_AUTH,
+         responses={**api.MANAGER_DISABLED, **api.REDIRECT_LOGIN})
+def dashboard(request: Request, page_number: int = Query(1, alias="page", ge=1, le=100000)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    with dbq.get_pool().connection() as conn:
+        data = dashboard_data.overview(conn, principal["id"], page=page_number)
+    return _dashboard_response(dashboard_page.overview_page(
+        data, principal, viewer_auth.csrf_token(principal["id"]), current=page_number))
+
+
+@app.get("/admin", response_class=HTMLResponse, tags=["admin"],
+         summary="Administrator overview", dependencies=api.MANAGER_AUTH,
+         responses={**api.errors({"403": "Administrator access required."}), **api.MANAGER_DISABLED, **api.REDIRECT_LOGIN})
+def admin_dashboard(request: Request, page_number: int = Query(1, alias="page", ge=1, le=100000)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    if not principal["is_admin"]:
+        raise HTTPException(status_code=403, detail="administrator access required")
+    with dbq.get_pool().connection() as conn:
+        data = dashboard_data.overview(conn, principal["id"], admin=True, page=page_number)
+    return _dashboard_response(dashboard_page.overview_page(
+        data, principal, viewer_auth.csrf_token(principal["id"]), admin=True, current=page_number))
+
+
+@app.get("/admin/audit", response_class=HTMLResponse, tags=["admin"],
+         summary="SQL and MCP audit history", dependencies=api.MANAGER_AUTH,
+         responses={**api.errors({"403": "Administrator access required."}), **api.MANAGER_DISABLED, **api.REDIRECT_LOGIN})
+def admin_audit(request: Request, kind: str = Query("", pattern="^(|mcp|sql)$"),
+                status: str = Query("", pattern="^(|success|error|incomplete)$"),
+                page_number: int = Query(1, alias="page", ge=1, le=100000)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    if not principal["is_admin"]:
+        raise HTTPException(status_code=403, detail="administrator access required")
+    with dbq.get_pool().connection() as conn:
+        data = dashboard_data.audit_events(conn, kind=kind, status=status, page=page_number)
+    return _dashboard_response(dashboard_page.admin_audit_page(
+        data, principal, viewer_auth.csrf_token(principal["id"]),
+        kind=kind, status=status, current=page_number))
+
+
+@app.get("/admin/services", response_class=HTMLResponse, tags=["admin"],
+         summary="Service health and maintenance history", dependencies=api.MANAGER_AUTH,
+         responses={**api.errors({"403": "Administrator access required."}), **api.MANAGER_DISABLED, **api.REDIRECT_LOGIN})
+def admin_services(request: Request, accepted: bool = Query(False)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    if not principal["is_admin"]:
+        raise HTTPException(status_code=403, detail="administrator access required")
+    data, error = None, None
+    try:
+        data = service_admin.request("GET", "/status")
+    except service_admin.Unavailable as exc:
+        error = str(exc)
+    return _dashboard_response(service_admin.service_page(
+        data, principal, viewer_auth.csrf_token(principal["id"]), error=error, accepted=accepted))
+
+
+@app.post("/admin/services/action", response_class=RedirectResponse, status_code=303,
+          tags=["admin"], summary="Request an allowed service start or restart", dependencies=api.MANAGER_AUTH,
+          responses={**api.REDIRECT_LOGIN, **api.errors({"400": "Invalid request ID or action.",
+                     "403": "Administrator access required or bad CSRF token."}),
+                     503: api.content("Controller unavailable.", "text/html", {"type": "string"})})
+def admin_service_action(request: Request, service: str = Form(""), action: str = Form(""),
+                         request_id: str = Form(""), csrf: str = Form("")):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    if not principal["is_admin"]:
+        raise HTTPException(status_code=403, detail="administrator access required")
+    if not viewer_auth.csrf_ok(principal["id"], csrf):
+        raise HTTPException(status_code=403, detail="bad csrf token")
+    try:
+        UUID(request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid request id") from None
+    if action not in ("start", "restart"):
+        raise HTTPException(status_code=400, detail="unsupported maintenance action")
+    try:
+        service_admin.request("POST", "/actions", {
+            "id": request_id, "service": service, "action": action,
+            "actor_id": principal["id"], "actor": (principal["name"] or principal["id"])[:200]})
+    except service_admin.Unavailable as exc:
+        response = _dashboard_response(service_admin.service_page(
+            None, principal, viewer_auth.csrf_token(principal["id"]), error=str(exc)))
+        response.status_code = 503
+        return response
+    return RedirectResponse("/admin/services?accepted=true", status_code=303)
+
+
+@app.get("/workspaces/{workspace_id}", response_class=HTMLResponse, tags=["manager"],
+         summary="Workspace layers, maps and audit history", dependencies=api.MANAGER_AUTH,
+         responses={**api.errors({"404": "Unknown or unowned workspace."}), **api.MANAGER_DISABLED, **api.REDIRECT_LOGIN})
+def workspace_dashboard(workspace_id: str, request: Request,
+                        kind: str = Query("", pattern="^(|mcp|sql)$"),
+                        status: str = Query("", pattern="^(|success|error|incomplete)$"),
+                        page_number: int = Query(1, alias="page", ge=1, le=100000)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    with dbq.get_pool().connection() as conn:
+        workspace = dashboard_data.workspace(conn, principal["id"], workspace_id,
+                                             admin=principal["is_admin"])
+        if workspace is None:
+            raise HTTPException(status_code=404, detail="unknown workspace")
+        data = dashboard_data.audit_events(conn, workspace_id=workspace["id"],
+                                           kind=kind, status=status, page=page_number)
+    return _dashboard_response(dashboard_page.workspace_page(
+        workspace, data, principal, viewer_auth.csrf_token(principal["id"]),
+        kind=kind, status=status, current=page_number))
 
 
 @app.get("/v/{view_id}/style.json", tags=["map"], summary="MapLibre style document",
@@ -300,15 +443,20 @@ def origo_json(view_id: api.ViewId):
 
 @app.get("/v/{view_id}", tags=["map"], summary="Interactive map page", response_class=HTMLResponse,
          responses={**api.UNKNOWN_VIEW, **api.errors({"400": "renderer must be 'maplibre' or 'origo'."})})
-def view_page(view_id: api.ViewId, renderer: str = Query(default="maplibre", description="maplibre or origo; other values return 400")):
+def view_page(view_id: api.ViewId, request: Request, renderer: str = Query(default="maplibre", description="maplibre or origo; other values return 400")):
     if renderer not in ("maplibre", "origo"):
         raise HTTPException(status_code=400, detail="renderer must be 'maplibre' or 'origo'")
+    key_id = _manager_key_id(request)
     with dbq.get_pool().connection() as conn:
-        _load_view(conn, view_id)
+        view = _load_view(conn, view_id)
+        principal = dashboard_data.principal(conn, key_id) if key_id else None
     n = _nonce()
-    if renderer == "origo":
-        return _html(page.origo_page(view_id, n), n)
-    return _html(page.maplibre_page(view_id, n), n, allow_eval=True)
+    render = page.origo_page if renderer == "origo" else page.maplibre_page
+    body = render(view_id, n, title=view["title"], principal=principal,
+                  csrf=viewer_auth.csrf_token(key_id) if key_id else "")
+    response = _html(body, n, allow_eval=renderer == "maplibre")
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @app.get("/data/{layer}.geojson", tags=["data"], summary="Layer as GeoJSON", response_class=Response,

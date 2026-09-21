@@ -88,5 +88,5 @@ def test_job_listing_passes_workspace_filter(monkeypatch):
 
 def test_export_argument_forms_are_unambiguous(monkeypatch):
     monkeypatch.setattr(server, "_ws", lambda *args: Mock(id="workspace"))
-    result = server.export(layers=["ref.test"], job_id=7)
+    result = server.export.__wrapped__(layers=["ref.test"], job_id=7)
     assert "OR job_id" in result["error"]

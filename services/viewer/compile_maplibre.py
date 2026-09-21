@@ -10,8 +10,12 @@ from compile_common import (CODE_VERSION as CODE_VERSION, DEFAULT_CIRCLE_RADIUS,
                             DEFAULT_POLYGON_STROKE, _num, resolve_vector_layer)
 
 
-POSITRON_TILES = "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png"
-CARTO_ATTRIBUTION = "© OpenStreetMap contributors © CARTO"
+BASEMAP_TILES = "https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}@2x.png"
+CARTO_BASEMAP_API_KEY = os.environ.get("CARTO_BASEMAP_API_KEY", "").strip()
+if CARTO_BASEMAP_API_KEY:
+    BASEMAP_TILES += "?key=" + quote(CARTO_BASEMAP_API_KEY, safe="")
+BASEMAP_ATTRIBUTION = ('© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors '
+                       '© <a href="https://carto.com/attributions">CARTO</a>')
 
 GEOJSON_MAX_FEATURES = 20000
 
@@ -91,13 +95,13 @@ def _compare_metadata(compare, layer_ids_by_ref):
 
 
 def _basemap(sources, layers):
-    # The MapLibre renderer always shows Carto Positron: it renders in EPSG:3857,
+    # The MapLibre renderer shows CARTO Positron: it renders in EPSG:3857,
     # where the CDN tiles are aligned and far faster than any municipal WMS.
     # spec['basemap'] is not consulted — the backdrop is per-renderer, not
     # per-view: Origo always shows the official municipal WMS instead (it renders
     # in EPSG:3014, where XYZ tiles cannot be aligned; see compile_origo).
-    sources["basemap"] = {"type": "raster", "tiles": [POSITRON_TILES],
-                          "tileSize": 256, "attribution": CARTO_ATTRIBUTION}
+    sources["basemap"] = {"type": "raster", "tiles": [BASEMAP_TILES],
+                          "tileSize": 256, "attribution": BASEMAP_ATTRIBUTION}
     layers.append({"id": "basemap", "type": "raster", "source": "basemap"})
 
 

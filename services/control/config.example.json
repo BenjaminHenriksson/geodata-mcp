@@ -1,0 +1,67 @@
+{
+  "database": "/absolute/service-control/data/audit.sqlite",
+  "token_file": "/absolute/service-control/runtime/token",
+  "targets": {
+    "mcp": {
+      "name": "MCP",
+      "kind": "docker",
+      "project": "geodata-mcp-v2",
+      "service": "mcp",
+      "actions": [
+        "start",
+        "restart"
+      ]
+    },
+    "viewer": {
+      "name": "Kartvisare",
+      "kind": "docker",
+      "project": "geodata-mcp-v2",
+      "service": "viewer",
+      "actions": [
+        "start",
+        "restart"
+      ]
+    },
+    "worker": {
+      "name": "Worker",
+      "kind": "docker",
+      "project": "geodata-mcp-v2",
+      "service": "worker",
+      "actions": [
+        "start",
+        "restart"
+      ]
+    },
+    "postgres": {
+      "name": "PostgreSQL",
+      "kind": "docker",
+      "project": "geodata-mcp-v2",
+      "service": "postgres",
+      "actions": []
+    },
+    "minio": {
+      "name": "Objektlagring",
+      "kind": "docker",
+      "project": "geodata-mcp-v2",
+      "service": "minio",
+      "actions": []
+    },
+    "caddy": {
+      "name": "Proxy",
+      "kind": "docker",
+      "project": "geodata-mcp-v2",
+      "service": "caddy",
+      "actions": []
+    },
+    "sam3": {
+      "name": "SAM3 API",
+      "kind": "systemd",
+      "unit": "sam3-segmenter.service",
+      "health_url": "http://127.0.0.1:8200/healthz",
+      "actions": [
+        "start",
+        "restart"
+      ]
+    }
+  }
+}

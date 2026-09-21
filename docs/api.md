@@ -66,6 +66,9 @@ All map/data endpoints are protected by **capability URLs**: a valid, unguessabl
 | GET | `/tiles/{layer}/{z}/{x}/{y}.mvt` | Mapbox Vector Tile (`view`) |
 | GET | `/wmsref/{dataset_id}` | server-side WMS GetMap proxy (`view` + WMS KVP) |
 | GET/POST | `/login`, `/logout` | workspace-manager sign in / out |
+| GET | `/dashboard`, `/workspaces/{workspace_id}` | owned workspace overview and audit |
+| GET | `/admin`, `/admin/audit`, `/admin/services` | administrator dashboards, audit and service status |
+| POST | `/admin/services/action` | allowlisted service maintenance (admin + CSRF) |
 | GET | `/workspaces` | workspace manager UI (session cookie) |
 | POST | `/workspaces/action` | activate / rename / delete a workspace (CSRF) |
 | GET | `/static/{path}` | bundled static assets |

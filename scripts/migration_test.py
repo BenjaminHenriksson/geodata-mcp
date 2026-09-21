@@ -16,6 +16,11 @@ def main():
     parser.add_argument('--image', required=True)
     args = parser.parse_args()
     name = f'geodata-migrations-{uuid.uuid4().hex[:10]}'
+    root = Path(__file__).resolve().parents[1]
+    files = list((root/'db/migrations').glob('*.sql'))
+    migration_count = len(files)
+    next_version = max(int(f.name.split('_')[0]) for f in files) + 1
+    probe = f'/opt/geodata-db/migrations/{next_version:03}_failure.sql'
 
     def docker(*args, input=None, ok=True):
         result = subprocess.run(['docker', *args], input=input, text=True, capture_output=True)
@@ -48,7 +53,7 @@ def main():
             time.sleep(1)
         else:
             raise AssertionError(docker('logs', name, ok=False).stdout)
-        assert sql('SELECT count(*) FROM public.geodata_schema_migrations').stdout.strip() == '6'
+        assert sql('SELECT count(*) FROM public.geodata_schema_migrations').stdout.strip() == str(migration_count)
         assert sql("SELECT has_database_privilege('geodata_app', 'fixture', 'CREATE')").stdout.strip() == 't'
         print('PASS fresh install, tracked versions and non-default database name', flush=True)
 
@@ -83,7 +88,6 @@ def main():
 
         # Reconstruct the older transient-session schema before 001-005.
         sql('CREATE DATABASE old_fixture; GRANT CREATE ON DATABASE old_fixture TO geodata_app;')
-        root = Path(__file__).resolve().parents[1]
         sql((root/'db/init/01_extensions.sql').read_text(), 'old_fixture')
         sql((root/'db/migrations/000_initial.sql').read_text(), 'old_fixture')
         sql("""
@@ -101,21 +105,21 @@ def main():
         print('PASS older session schema upgrades and retains historical attribution', flush=True)
 
         # A failure must not leave either the DDL or a recorded history entry.
-        docker('exec', '-i', name, 'sh', '-c', 'cat > /opt/geodata-db/migrations/006_failure.sql',
+        docker('exec', '-i', name, 'sh', '-c', f'cat > {probe}',
                input='CREATE TABLE app.rollback_probe(id int); SELECT 1/0;\n')
         assert migrate(ok=False).returncode != 0
         assert sql("SELECT to_regclass('app.rollback_probe') IS NULL").stdout.strip() == 't'
-        assert sql('SELECT count(*) FROM public.geodata_schema_migrations').stdout.strip() == '6'
-        docker('exec', '-i', name, 'sh', '-c', 'cat > /opt/geodata-db/migrations/006_failure.sql',
+        assert sql('SELECT count(*) FROM public.geodata_schema_migrations').stdout.strip() == str(migration_count)
+        docker('exec', '-i', name, 'sh', '-c', f'cat > {probe}',
                input='SELECT pg_sleep(1); CREATE TABLE app.rollback_probe(id int);\n')
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(lambda _: migrate(), range(2)))
-        assert sql('SELECT count(*) FROM public.geodata_schema_migrations').stdout.strip() == '7'
+        assert sql('SELECT count(*) FROM public.geodata_schema_migrations').stdout.strip() == str(migration_count + 1)
         print('PASS transactional failure/retry and concurrent migration runners', flush=True)
-        docker('exec', name, 'sh', '-c', 'echo "-- changed" >> /opt/geodata-db/migrations/006_failure.sql')
+        docker('exec', name, 'sh', '-c', f'echo "-- changed" >> {probe}')
         result = migrate(ok=False)
         assert result.returncode != 0 and 'Applied migrations are missing or changed' in result.stderr
-        docker('exec', name, 'rm', '/opt/geodata-db/migrations/006_failure.sql')
+        docker('exec', name, 'rm', probe)
         assert migrate(ok=False).returncode != 0
         print('PASS changed or missing applied migrations are rejected', flush=True)
     finally:
