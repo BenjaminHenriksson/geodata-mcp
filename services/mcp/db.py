@@ -122,13 +122,14 @@ def wait_for_job(job_id: int, timeout_s: float, poll_s: float = 0.5) -> dict | N
     return job
 
 
-def recent_jobs(limit: int = 20) -> list[dict]:
+def recent_jobs(limit: int = 20, workspace_id: str | None = None) -> list[dict]:
     with app_pool().connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """SELECT id, kind, status, error, workspace_id, attempts,
                           created_at, started_at, finished_at
-                     FROM app.jobs ORDER BY id DESC LIMIT %s""",
-                (limit,),
+                     FROM app.jobs WHERE (%s::text IS NULL OR workspace_id = %s)
+                    ORDER BY id DESC LIMIT %s""",
+                (workspace_id, workspace_id, limit),
             )
             return cur.fetchall()

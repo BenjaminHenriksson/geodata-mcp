@@ -19,7 +19,6 @@ kinds are unchanged (the worker is untouched by the tool-surface move).
 from psycopg import sql as pgsql
 
 import db
-import geometry
 import job_ops
 import sessions
 import sqlguard
@@ -342,16 +341,11 @@ def run(workspace_id: str, processor_id: str | None, params: dict | None) -> dic
     return spec["run"](workspace_id, params)
 
 
-def status(job_id, timeout_s: float | None = None) -> dict:
-    try:
-        jid = int(job_id)
-    except (TypeError, ValueError):
-        return {"error": "job_id must be an integer"}
-    wait = min(max(float(timeout_s or 0), 0.0), 25.0)
-    job = db.wait_for_job(jid, timeout_s=wait) if wait > 0 else db.get_job(jid)
-    if job is None:
-        return {"error": f"no job with id {job_id}"}
-    out = geometry.jsonable_row(job)
+def status(job_id, timeout_s: float | None = None, workspace_id=None) -> dict:
+    out = job_ops.status(job_id, timeout_s, workspace_id=workspace_id)
+    if "error" in out and "status" not in out:
+        return out
+    job = out
     if job["status"] == "done" and isinstance(job.get("result"), dict):
         tbl = job["result"].get("table")
         if tbl:
@@ -360,28 +354,5 @@ def status(job_id, timeout_s: float | None = None) -> dict:
     return out
 
 
-def cancel(job_id) -> dict:
-    try:
-        jid = int(job_id)
-    except (TypeError, ValueError):
-        return {"error": "job_id must be an integer"}
-    with db.app_pool().connection() as conn:
-        row = conn.execute(
-            """UPDATE app.jobs
-                  SET status = 'cancelled', error = 'cancelled before start',
-                      finished_at = now()
-                WHERE id = %s AND status = 'queued'
-                RETURNING id""",
-            (jid,),
-        ).fetchone()
-        if row:
-            return {"job_id": jid, "status": "cancelled"}
-        cur = conn.execute("SELECT status FROM app.jobs WHERE id = %s", (jid,)).fetchone()
-    if cur is None:
-        return {"error": f"no job with id {job_id}"}
-    st = cur[0]
-    if st == "running":
-        return {"error": f"job {jid} is already running — cooperative interruption is "
-                         "not implemented; it will finish or error on its own"}
-    return {"job_id": jid, "status": st,
-            "note": "only queued jobs can be cancelled; this one already finished"}
+def cancel(job_id, workspace_id=None) -> dict:
+    return job_ops.cancel(job_id, workspace_id=workspace_id)

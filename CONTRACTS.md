@@ -477,3 +477,11 @@ only that request and never switches the key's active default. Invalid or unowne
 IDs fail without falling back. `workspace(op="new", activate=False)` creates or
 returns a workspace without switching; workspace replies include `id`. Legacy
 calls that omit the selector keep using the key's active workspace.
+
+## Job retrieval
+
+`load(op="status"|"jobs")` and `analyze(op="status"|"cancel")` operate on the
+selected workspace. `export(layers=...)` submits a job; `export(job_id=...)`
+retrieves that same export and renews its download links, without enqueuing work.
+These two argument forms are mutually exclusive. Pass the original workspace ID
+when polling after another client has changed the shared default.

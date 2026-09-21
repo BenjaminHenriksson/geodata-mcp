@@ -172,8 +172,8 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
       EPSG:3014 unless crs='4326'), or 'lon'/'lat' keys (always WGS84). source is
       MANDATORY — say where the data comes from; it is recorded in provenance.
       Column types are inferred (text / double precision / bigint / boolean).
-    - op='status' {job_id}: one job's row (status queued|running|done|error, result, error).
-    - op='jobs' {}: the last 20 jobs.
+    - op='status' {job_id}: one job's row in the selected workspace (status queued|running|done|error, result, error).
+    - op='jobs' {}: the last 20 jobs in the selected workspace.
     - op='embed' {}: (re)embed catalog + document chunks for semantic search (idempotent).
 
     Registering a pdf/file/text source also creates its dataset immediately and returns
@@ -199,9 +199,9 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
         if op == "status":
             if job_id is None:
                 return {"error": "status needs job_id"}
-            return load_ops.status(job_id)
+            return load_ops.status(job_id, workspace_id=w.id)
         if op == "jobs":
-            return load_ops.jobs()
+            return load_ops.jobs(workspace_id=w.id)
         if op == "embed":
             return load_ops.embed(w.id)
         return {"error": "op must be one of register|ingest|inline|status|jobs|embed"}
@@ -247,11 +247,11 @@ def analyze(op: str, id: str | None = None, params: dict | None = None,
         if op == "status":
             if job_id is None:
                 return {"error": "status needs job_id"}
-            return analysis_ops.status(job_id, timeout_s)
+            return analysis_ops.status(job_id, timeout_s, workspace_id=w.id)
         if op == "cancel":
             if job_id is None:
                 return {"error": "cancel needs job_id"}
-            return analysis_ops.cancel(job_id)
+            return analysis_ops.cancel(job_id, workspace_id=w.id)
         return {"error": "op must be one of list|describe|run|status|cancel"}
     except sessions.AuthError as e:
         return _auth_error(e)
@@ -461,7 +461,7 @@ def map(op: str = "upsert", view_id: str | None = None, title: str | None = None
 
 
 @mcp.tool()
-def export(layers: list, format: str = "gpkg", cite: bool = True, ctx: Context = None, workspace_id: str | None = None) -> dict:
+def export(layers: list | None = None, format: str = "gpkg", cite: bool = True, ctx: Context = None, workspace_id: str | None = None, job_id: int | None = None) -> dict:
     """Export layers to a standard GIS file and get a download URL (valid 24 h).
 
     layers: list of 'schema.table' refs — shared 'ref.<table>' layers and/or your own
@@ -471,12 +471,17 @@ def export(layers: list, format: str = "gpkg", cite: bool = True, ctx: Context =
     licenses — pass its URL along whenever the data leaves the system.
 
     Waits up to 30 s for the export job; if still running you get {job_id, status} — poll
-    with load(op='status', job_id=...) and call export again when done.
+    with export(job_id=...) in the same workspace to retrieve it without starting another job.
+    Omit layers when retrieving; completed jobs return newly signed links to the same files.
     Returns {url, sidecar_url, format, expires_hours}.
     workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:
         w = _ws(ctx, workspace_id)
+        if job_id is not None:
+            if layers is not None:
+                return {"error": "provide layers to start an export OR job_id to retrieve one"}
+            return export_ops.result(w.id, job_id)
         return export_ops.run_export(w.id, layers, format, cite)
     except sessions.AuthError as e:
         return _auth_error(e)

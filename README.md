@@ -72,6 +72,11 @@ WMS backdrop. MapLibre uses GeoJSON for smaller layers and vector tiles above
 20,000 features. Origo reports incompatible WMTS layers instead of drawing
 misaligned tiles. Style changes invalidate the viewer cache.
 
+Export calls that outlast the initial wait return a `job_id`. Retrieve them with
+`export(job_id=..., workspace_id=...)`; this reuses the existing artifact and
+refreshes its signed links. Job status, listing and cancellation are scoped to
+the selected workspace.
+
 ## Data and models
 
 WFS, WMS, WMTS, OGC API Features, STAC, files, PDF, text and inline sources are

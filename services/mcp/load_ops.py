@@ -55,8 +55,9 @@ def register(workspace_id: str, kind: str, url: str | None, title: str,
                 (kind, url),
             ).fetchone()
             if existing:
-                job_id = (db.enqueue_job(HARVEST_JOB[kind], {"source_id": existing[0]}, workspace_id)
-                          if kind in HARVEST_JOB else None)
+                job_id = None
+                if kind in HARVEST_JOB:
+                    job_id, _ = job_ops.enqueue(HARVEST_JOB[kind], {"source_id": existing[0]}, workspace_id)
                 return {"source_id": existing[0], "slug": existing[1], "job_id": job_id,
                         "note": "source already registered — re-harvesting to refresh its "
                                 "datasets rather than creating a duplicate"}
@@ -71,7 +72,7 @@ def register(workspace_id: str, kind: str, url: str | None, title: str,
     job_id = None
     dataset_id = None
     if kind in HARVEST_JOB:
-        job_id = db.enqueue_job(HARVEST_JOB[kind], {"source_id": source_id}, workspace_id)
+        job_id, _ = job_ops.enqueue(HARVEST_JOB[kind], {"source_id": source_id}, workspace_id)
     elif kind in ("pdf", "file", "text"):
         # No harvest step for single-artifact sources: the dataset row exists immediately
         # so op='ingest' can target it (contract §MCP server, load op register).
@@ -264,21 +265,15 @@ def inline(workspace_id: str, rows: list, table_name: str, source: str | None,
 
 def embed(workspace_id: str) -> dict:
     """Enqueue an embed_catalog job (idempotent: only missing/model-mismatched rows)."""
-    job_id = db.enqueue_job("embed_catalog", {}, workspace_id)
+    job_id, _ = job_ops.enqueue("embed_catalog", {}, workspace_id)
     return {"job_id": job_id,
             "note": "embedding catalog + doc chunks with EmbeddingGemma — first run downloads "
                     "the model and can take minutes; poll with op='status'"}
 
 
-def status(job_id) -> dict:
-    try:
-        job = db.get_job(int(job_id))
-    except (TypeError, ValueError):
-        return {"error": "job_id must be an integer"}
-    if job is None:
-        return {"error": f"no job with id {job_id}"}
-    return geometry.jsonable_row(job)
+def status(job_id, workspace_id=None) -> dict:
+    return job_ops.status(job_id, workspace_id=workspace_id)
 
 
-def jobs() -> dict:
-    return {"jobs": [geometry.jsonable_row(j) for j in db.recent_jobs(20)]}
+def jobs(workspace_id=None) -> dict:
+    return {"jobs": [geometry.jsonable_row(j) for j in db.recent_jobs(20, workspace_id)]}

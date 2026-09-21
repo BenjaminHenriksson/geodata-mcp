@@ -7,6 +7,7 @@ from minio import Minio
 
 import config
 import db
+import job_ops
 import sessions
 import sqlguard
 
@@ -61,18 +62,30 @@ def run_export(workspace_id: str, layers, fmt: str, cite: bool) -> dict:
             clean.append(str(ref))
 
     payload = {"layers": clean, "format": fmt, "cite": bool(cite), "workspace_id": workspace_id}
-    job_id = db.enqueue_job("export", payload, workspace_id)
-    job = db.wait_for_job(job_id, timeout_s=WAIT_S)
+    job_id, job = job_ops.enqueue("export", payload, workspace_id, timeout_s=WAIT_S)
+    return _result(job_id, job, fmt)
 
+
+def result(workspace_id: str, job_id) -> dict:
+    """Get fresh signed links for an existing export; never enqueue another job."""
+    job, error = job_ops.lookup(job_id, workspace_id=workspace_id, kind="export")
+    if error:
+        return error
+    return _result(int(job_id), job, (job.get("payload") or {}).get("format", "gpkg"))
+
+
+def _result(job_id, job, fmt):
     if job is None:
         return {"error": f"job {job_id} vanished — check load(op='jobs')", "job_id": job_id}
     if job["status"] == "error":
         return {"error": f"export failed: {job.get('error') or 'unknown error'}", "job_id": job_id}
     if job["status"] in ("queued", "running"):
         return {"job_id": job_id, "status": job["status"],
-                "note": "export still running — poll with load(op='status', job_id=...) "
-                        "and call export again once done, or wait for the result keys"}
+                "note": "export still running — poll with export(job_id=...) in the same workspace; "
+                        "this retrieves the existing job without creating another export"}
 
+    if job["status"] == "cancelled":
+        return {"job_id": job_id, "status": "cancelled", "error": "export cancelled"}
     result = job.get("result") or {}
     object_key = result.get("object_key")
     sidecar_key = result.get("sidecar_key")
