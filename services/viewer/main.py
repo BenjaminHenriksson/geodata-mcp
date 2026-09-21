@@ -191,7 +191,7 @@ def login(key: str = Form("")):
         with dbq.get_pool().connection() as conn:
             key_id = dbq.api_key_id_for_hash(conn, viewer_auth.hash_key(key))
     if key_id is None:
-        return _html(page.login_page("Unknown or disabled API key."), _nonce(), status_code=401)
+        return _html(page.login_page("Okänd eller inaktiverad API-nyckel."), _nonce(), status_code=401)
     resp = RedirectResponse("/dashboard", status_code=303)
     resp.set_cookie(viewer_auth.COOKIE_NAME, viewer_auth.make_cookie(key_id),
                     max_age=viewer_auth.COOKIE_TTL_S, httponly=True, samesite="lax")
@@ -213,7 +213,8 @@ def workspaces(request: Request):
         return RedirectResponse("/login", status_code=302)
     with dbq.get_pool().connection() as conn:
         rows = dbq.workspaces_for_key(conn, key_id)
-    return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id)), _nonce())
+        principal = dashboard_data.principal(conn, key_id)
+    return _dashboard_response(page.workspaces_page(rows, viewer_auth.csrf_token(key_id), principal=principal))
 
 
 @app.post("/workspaces/action", response_class=HTMLResponse)
@@ -231,7 +232,7 @@ def workspaces_action(request: Request, action: str = Form(""),
     with dbq.get_pool().connection() as conn:
         row = dbq.workspace_owned(conn, key_id, workspace_id)
         if row is None:
-            error = "unknown workspace"
+            error = "Arbetsytan finns inte."
         elif action == "activate":
             dbq.activate_workspace(conn, key_id, row[0])
         elif action == "rename":
@@ -239,10 +240,11 @@ def workspaces_action(request: Request, action: str = Form(""),
         elif action == "delete":
             dbq.delete_workspace(conn, key_id, row[0], row[2])
         else:
-            error = "unknown action"
+            error = "Okänd åtgärd."
         if error:
             rows = dbq.workspaces_for_key(conn, key_id)
-            return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id), error=error),
+            return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id), error=error,
+                                                principal=dashboard_data.principal(conn, key_id)),
                          _nonce(), status_code=400)
     return RedirectResponse("/workspaces", status_code=303)
 
@@ -348,15 +350,20 @@ def origo_json(view_id: str):
 
 
 @app.get("/v/{view_id}", response_class=HTMLResponse)
-def view_page(view_id: str, renderer: str = Query(default="maplibre")):
+def view_page(view_id: str, request: Request, renderer: str = Query(default="maplibre")):
     if renderer not in ("maplibre", "origo"):
         raise HTTPException(status_code=400, detail="renderer must be 'maplibre' or 'origo'")
+    key_id = _manager_key_id(request)
     with dbq.get_pool().connection() as conn:
-        _load_view(conn, view_id)
+        view = _load_view(conn, view_id)
+        principal = dashboard_data.principal(conn, key_id) if key_id else None
     n = _nonce()
-    if renderer == "origo":
-        return _html(page.origo_page(view_id, n), n)
-    return _html(page.maplibre_page(view_id, n), n, allow_eval=True)
+    render = page.origo_page if renderer == "origo" else page.maplibre_page
+    body = render(view_id, n, title=view["title"], principal=principal,
+                  csrf=viewer_auth.csrf_token(key_id) if key_id else "")
+    response = _html(body, n, allow_eval=renderer == "maplibre")
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @app.get("/data/{layer}.geojson")
