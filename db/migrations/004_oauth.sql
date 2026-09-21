@@ -8,12 +8,6 @@
 -- one app.api_keys row per subject, so every OAuth login gets its own isolated
 -- workspace scope. Auth codes are short-lived and kept in-process, not here.
 --
--- Apply to an existing database with:
---   docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/004_oauth.sql
--- (db/init/04_tables.sql carries the same DDL for fresh installs; oauth.init() also
--- creates these idempotently at MCP startup, so this migration is belt-and-braces.)
-
-BEGIN;
 SET ROLE geodata_app;
 
 CREATE TABLE IF NOT EXISTS app.oauth_clients (
@@ -34,4 +28,3 @@ CREATE TABLE IF NOT EXISTS app.oauth_tokens (
 CREATE INDEX IF NOT EXISTS oauth_tokens_expires_idx ON app.oauth_tokens (expires_at);
 
 RESET ROLE;
-COMMIT;

@@ -73,37 +73,6 @@ def _reap_auth_codes() -> None:
 
 # ---- Postgres-backed client + token store --------------------------------
 
-def init() -> None:
-    """Create the OAuth tables if missing (idempotent). Runs as geodata_app, which
-    owns the app schema. db/migrations/004_oauth.sql carries the same DDL for a
-    hand-applied migration; this makes a fresh deploy self-bootstrapping."""
-    with db.app_pool().connection() as conn:
-        with conn.transaction():
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS app.oauth_clients (
-                       client_id     text PRIMARY KEY,
-                       redirect_uris jsonb NOT NULL,
-                       client_name   text NOT NULL DEFAULT '',
-                       created_at    timestamptz NOT NULL DEFAULT now()
-                   )"""
-            )
-            conn.execute(
-                """CREATE TABLE IF NOT EXISTS app.oauth_tokens (
-                       token      text PRIMARY KEY,
-                       kind       text NOT NULL CHECK (kind IN ('access','refresh')),
-                       client_id  text NOT NULL
-                                    REFERENCES app.oauth_clients(client_id) ON DELETE CASCADE,
-                       subject    text NOT NULL,
-                       expires_at timestamptz NOT NULL,
-                       created_at timestamptz NOT NULL DEFAULT now()
-                   )"""
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS oauth_tokens_expires_idx "
-                "ON app.oauth_tokens (expires_at)"
-            )
-
-
 def _db_insert_client(client_id: str, redirect_uris: list[str], client_name: str) -> None:
     import json as _json
     with db.app_pool().connection() as conn:

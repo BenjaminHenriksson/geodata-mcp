@@ -495,7 +495,6 @@ def main() -> None:
               "(auth is not optional).", file=sys.stderr)
         raise SystemExit(1)
     sessions.bootstrap_env_keys(config.GEODATA_API_KEYS)
-    oauth.init()
     app = mcp.streamable_http_app()
     # OAuth discovery + browser-login endpoints. They live outside /mcp by path, so the
     # bearer gate (which only guards /mcp*) lets them through unauthenticated, as the

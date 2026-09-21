@@ -36,12 +36,8 @@ Secrets (ska-krav #59):
 Bearer auth: clients call /mcp with `Authorization: Bearer <key>` (GEODATA_API_KEYS).
 Workspace manager UI: {{ if .Values.ingress.enabled }}https://{{ .Values.ingress.host }}{{ else }}<origin>{{ end }}/workspaces
 
-{{- if not .Values.postgres.initScriptsConfigMap }}
-
-NOTE (postgres first boot): the geodata-mcp/db image must ship the SQL/shell in
-/docker-entrypoint-initdb.d (db/init/*), or set `postgres.initScriptsConfigMap`
-to a ConfigMap you create from db/init/*. Without it the schema/roles are not
-created on an empty data volume.
-{{- end }}
+Database upgrades: after updating the PostgreSQL image, run
+/opt/geodata-db/migrate.sh -U "$POSTGRES_USER" -d "$POSTGRES_DB" inside that pod
+before rolling out new application images. Fresh volumes migrate automatically.
 
 Metrics (ska-krav #81): {{ if .Values.metrics.enabled }}Prometheus scrape annotations set on mcp/worker/viewer pods (path {{ .Values.metrics.path }}).{{ else }}disabled (metrics.enabled=false).{{ end }}

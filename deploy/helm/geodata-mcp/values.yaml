@@ -147,11 +147,8 @@ postgres:
     - "max_connections=120"
     - "-c"
     - "shared_buffers=512MB"
-  # First-boot init runs the SQL/shell in /docker-entrypoint-initdb.d. In compose
-  # that directory is a bind mount of db/init; for a container platform it must be
-  # baked into the image (recommended: add `COPY init /docker-entrypoint-initdb.d`
-  # to db/Dockerfile when building geodata-mcp/db) OR delivered via a ConfigMap the
-  # buyer creates from db/init/*. Set that ConfigMap's name here to mount it.
+  # Optional override for the bootstrap scripts already included in db/Dockerfile.
+  # Keep 03_migrate.sh so fresh installs run /opt/geodata-db/migrate.sh.
   initScriptsConfigMap: ""
   service:
     port: 5432

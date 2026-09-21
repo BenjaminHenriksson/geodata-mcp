@@ -4,11 +4,6 @@
 -- two Lantmäteriet orthophoto vintages, diffed into a workspace layer), and the
 -- worker records a provenance row of the same kind for the output tables.
 --
--- Apply to an existing database with:
---   docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/003_change_detection.sql
--- (db/init/04_tables.sql carries the same lists for fresh installs.)
-
-BEGIN;
 SET ROLE geodata_app;
 
 ALTER TABLE app.jobs DROP CONSTRAINT IF EXISTS jobs_kind_check;
@@ -23,4 +18,3 @@ ALTER TABLE app.provenance ADD CONSTRAINT provenance_kind_check CHECK (kind IN (
   'layer_rename', 'ddl_event', 'export', 'inline', 'change_detect'));
 
 RESET ROLE;
-COMMIT;

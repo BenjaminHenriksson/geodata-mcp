@@ -10,10 +10,10 @@ set -euo pipefail
 
 psql -v ON_ERROR_STOP=1 \
      --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-     -v app_pw="$APP_DB_PASSWORD" -v ro_pw="$AGENT_RO_PASSWORD" -v ws_pw="$AGENT_WS_PASSWORD" <<'EOSQL'
+     -v db_name="$POSTGRES_DB" -v app_pw="$APP_DB_PASSWORD" -v ro_pw="$AGENT_RO_PASSWORD" -v ws_pw="$AGENT_WS_PASSWORD" <<'EOSQL'
 -- Service role: owns all app-managed schemas, used by mcp/worker/viewer control planes.
 CREATE ROLE geodata_app LOGIN PASSWORD :'app_pw';
-GRANT CREATE ON DATABASE geodata TO geodata_app;
+GRANT CREATE ON DATABASE :"db_name" TO geodata_app;
 -- Control-plane queries (viewer tiles/GeoJSON, catalog reads) must not run unbounded
 -- either. Generous, because ingest jobs legitimately run long — those raise it per session.
 ALTER ROLE geodata_app SET statement_timeout = '120s';

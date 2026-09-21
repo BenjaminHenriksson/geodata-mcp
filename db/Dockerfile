@@ -4,3 +4,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       postgresql-17-postgis-3 postgresql-17-pgvector postgresql-17-pgaudit \
  && rm -rf /var/lib/apt/lists/*
+
+COPY init/ /docker-entrypoint-initdb.d/
+COPY migrations/ /opt/geodata-db/migrations/
+COPY migrate.sh /opt/geodata-db/migrate.sh

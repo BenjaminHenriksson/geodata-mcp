@@ -5,16 +5,6 @@
 -- session_id attribution columns to workspace_id (the stored value changes
 -- meaning: it is now a workspace uuid, not a session hash).
 --
--- Idempotent: safe to run more than once. Run as the postgres superuser
--- (the event-trigger functions are SECURITY DEFINER owned by postgres):
---   docker compose exec -T postgres psql -U postgres -d geodata < db/migrations/001_durable_workspaces.sql
---
--- Existing ws_* schemas that belonged to old transient sessions are NOT dropped
--- here; the worker's orphan sweep removes any ws_* schema with no app.workspaces
--- row. Historical provenance/query_log rows keep their old hash values — they
--- remain valid audit history, just written before this migration.
-
-BEGIN;
 
 SET ROLE geodata_app;
 
@@ -98,4 +88,15 @@ BEGIN
   END LOOP;
 END $$;
 
-COMMIT;
+
+-- Fresh installs and legacy databases use the same event-trigger definitions.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_event_trigger WHERE evtname = 'provenance_ddl_end') THEN
+    CREATE EVENT TRIGGER provenance_ddl_end ON ddl_command_end
+      EXECUTE FUNCTION app.provenance_ddl_end();
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_event_trigger WHERE evtname = 'provenance_sql_drop') THEN
+    CREATE EVENT TRIGGER provenance_sql_drop ON sql_drop
+      EXECUTE FUNCTION app.provenance_sql_drop();
+  END IF;
+END $$;
