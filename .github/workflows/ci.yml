@@ -49,8 +49,8 @@ jobs:
     name: Regression tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - name: Create test environment
         run: |
           uv venv --python 3.12
@@ -59,7 +59,7 @@ jobs:
         run: .venv/bin/python -m pytest -q tests
       - name: Generate API reference from routes
         run: .venv/bin/python scripts/dump_openapi.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: viewer-openapi
           path: build/openapi.json
@@ -68,8 +68,8 @@ jobs:
     name: Database migration regression tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - run: uv venv --python 3.12
       - run: docker build -t geodata-db-test db
       - run: .venv/bin/python scripts/migration_test.py --image geodata-db-test
@@ -82,10 +82,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checka ut koden
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Sätt upp Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -126,10 +126,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checka ut koden
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Sätt upp Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -165,10 +165,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checka ut koden
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Sätt upp Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -191,7 +191,7 @@ jobs:
 
       - name: Ladda upp SBOM-artefakt
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-cyclonedx
           path: sbom/
@@ -208,7 +208,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checka ut koden
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: docker compose build
         # Obligatoriska ${VAR:?...}-variabler i docker-compose.yml måste ha
@@ -234,7 +234,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checka ut koden (hela historiken)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -250,7 +250,7 @@ jobs:
 
       - name: Ladda upp gitleaks-rapport
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gitleaks-report
           path: gitleaks/
