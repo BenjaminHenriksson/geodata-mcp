@@ -96,6 +96,13 @@ font:inherit;line-height:1.4;border:1px solid #afbdc7;background:white;color:var
 .login input{width:100%}.login button{width:100%;margin-top:16px}
 .alert{padding:10px 12px;border-radius:4px;background:#fcecef;color:#9d2331}
 .app-page section[id]{scroll-margin-top:16px}
+.services-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.services-grid>section{margin:0}.service .detail-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.service-action{border-top:1px solid var(--line);margin-top:16px;padding-top:12px}
+.service-action summary{cursor:pointer;color:#156598}
+.service-action p{margin:8px 0}.notice{padding:10px 12px;background:#e8f3ed;color:#176246;border-radius:4px}
+@media(max-width:1000px){.services-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:680px){.services-grid{grid-template-columns:minmax(0,1fr)}}
 .map-page{display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
 .map-page .app-bar{max-width:none}
 .map-toolbar{display:flex;align-items:center;gap:16px;justify-content:space-between;padding:8px 16px;background:white;border-bottom:1px solid var(--line);flex:none}
@@ -125,7 +132,7 @@ font:inherit;line-height:1.4;border:1px solid #afbdc7;background:white;color:var
 def header(principal=None, csrf="", active=""):
     links = [("/dashboard", "Översikt", "dashboard"), ("/workspaces", "Arbetsytor", "workspaces")]
     if principal and principal.get("is_admin"):
-        links.append(("/admin", "Administration", "admin"))
+        links.extend((("/admin", "Administration", "admin"), ("/admin/services", "Tjänster", "services")))
     nav = "".join(f'<a href="{path}"' + (' aria-current="page"' if active == key else '') +
                   f'>{label}</a>' for path, label, key in links)
     if principal:

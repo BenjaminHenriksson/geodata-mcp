@@ -3,6 +3,7 @@ and the auth-gated workspace manager UI."""
 import logging
 import os
 import secrets
+from uuid import UUID
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -19,6 +20,7 @@ import dbq
 import netauth
 import obs
 import page
+import service_admin
 import viewer_auth
 
 # Centralised observability (#81): structured JSON logs to stdout. Additive and
@@ -304,6 +306,50 @@ def admin_audit(request: Request, kind: str = Query("", pattern="^(|mcp|sql)$"),
     return _dashboard_response(dashboard_page.admin_audit_page(
         data, principal, viewer_auth.csrf_token(principal["id"]),
         kind=kind, status=status, current=page_number))
+
+
+@app.get("/admin/services", response_class=HTMLResponse)
+def admin_services(request: Request, accepted: bool = Query(False)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    if not principal["is_admin"]:
+        raise HTTPException(status_code=403, detail="administrator access required")
+    data, error = None, None
+    try:
+        data = service_admin.request("GET", "/status")
+    except service_admin.Unavailable as exc:
+        error = str(exc)
+    return _dashboard_response(service_admin.service_page(
+        data, principal, viewer_auth.csrf_token(principal["id"]), error=error, accepted=accepted))
+
+
+@app.post("/admin/services/action", response_class=HTMLResponse)
+def admin_service_action(request: Request, service: str = Form(""), action: str = Form(""),
+                         request_id: str = Form(""), csrf: str = Form("")):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    if not principal["is_admin"]:
+        raise HTTPException(status_code=403, detail="administrator access required")
+    if not viewer_auth.csrf_ok(principal["id"], csrf):
+        raise HTTPException(status_code=403, detail="bad csrf token")
+    try:
+        UUID(request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid request id") from None
+    if action not in ("start", "restart"):
+        raise HTTPException(status_code=400, detail="unsupported maintenance action")
+    try:
+        service_admin.request("POST", "/actions", {
+            "id": request_id, "service": service, "action": action,
+            "actor_id": principal["id"], "actor": (principal["name"] or principal["id"])[:200]})
+    except service_admin.Unavailable as exc:
+        response = _dashboard_response(service_admin.service_page(
+            None, principal, viewer_auth.csrf_token(principal["id"]), error=str(exc)))
+        response.status_code = 503
+        return response
+    return RedirectResponse("/admin/services?accepted=true", status_code=303)
 
 
 @app.get("/workspaces/{workspace_id}", response_class=HTMLResponse)
