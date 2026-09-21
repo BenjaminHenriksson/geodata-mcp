@@ -236,21 +236,7 @@ def ingest_wfs(conn, job) -> dict:
     schema = dbutil.check_schema_name(payload["target_schema"])
     table = dbutil.check_table_name(payload["table_name"])
 
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT d.id, d.external_id, s.url AS source_url
-              FROM catalog.datasets d
-              JOIN catalog.sources s ON s.id = d.source_id
-             WHERE d.id = %s::uuid
-            """,
-            (str(payload["dataset_id"]),),
-        )
-        dataset = cur.fetchone()
-    if dataset is None:
-        raise ValueError(f"unknown dataset_id: {payload['dataset_id']}")
-    if not dataset["source_url"]:
-        raise ValueError("dataset's source has no url")
+    dataset = dbutil.dataset_source(conn, payload["dataset_id"])
 
     wfs_source = "WFS:" + _strip_query(dataset["source_url"])
     args = files.base_load_args(wfs_source, schema, table,

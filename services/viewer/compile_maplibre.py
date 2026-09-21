@@ -1,44 +1,19 @@
 """Compile an app.map_views spec into a MapLibre GL style document."""
-import hashlib
 import os
-import pathlib
 from urllib.parse import quote
 
 import dbq
 import netauth
+from compile_common import (CODE_VERSION as CODE_VERSION, DEFAULT_CIRCLE_RADIUS,
+                            DEFAULT_FILL_OPACITY, DEFAULT_LINE_WIDTH,
+                            DEFAULT_PALETTE, DEFAULT_POLYGON_OUTLINE_WIDTH,
+                            DEFAULT_POLYGON_STROKE, _num, resolve_vector_layer)
 
-
-def _code_version():
-    """Short fingerprint of the compiler code, folded into the style ETag and the
-    Origo revision. The view version + layer_meta fingerprint alone do NOT change
-    when only the viewer code changes, so a deploy that alters compiled output
-    (new default popups, style tweaks, MVT/GeoJSON shape) would otherwise keep
-    serving a stale style to any page holding a cached copy. Hashing the compiler
-    sources makes every such deploy bust client caches automatically."""
-    here = pathlib.Path(__file__).parent
-    h = hashlib.sha1()
-    for name in ("compile_maplibre.py", "compile_origo.py", "dbq.py"):
-        try:
-            h.update((here / name).read_bytes())
-        except OSError:
-            pass
-    return h.hexdigest()[:8]
-
-
-CODE_VERSION = _code_version()
 
 POSITRON_TILES = "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png"
 CARTO_ATTRIBUTION = "© OpenStreetMap contributors © CARTO"
 
 GEOJSON_MAX_FEATURES = 20000
-
-DEFAULT_PALETTE = ["#1f78b4", "#e31a1c", "#33a02c", "#ff7f00",
-                   "#6a3d9a", "#b15928", "#a6cee3", "#fb9a99"]
-DEFAULT_POLYGON_STROKE = "#333333"
-DEFAULT_FILL_OPACITY = 0.45
-DEFAULT_LINE_WIDTH = 1.5
-DEFAULT_POLYGON_OUTLINE_WIDTH = 1
-DEFAULT_CIRCLE_RADIUS = 5
 
 
 def wms_tile_url(base_url, external_id):
@@ -94,27 +69,6 @@ def wmts_tile_url(ds):
                 + "&TILEROW={y}&TILECOL={x}"
                 + "&FORMAT=" + quote(fmt, safe=""))
     return None
-
-
-def _num(value, default):
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return value
-    return default
-
-
-def resolve_popup_attrs(entry, meta, cols):
-    """Attribute names to expose in a vector layer's feature-info popup.
-
-    Precedence: an explicit ``popup`` on the map entry wins (including ``[]``,
-    which deliberately disables the popup); then the layer's stored popup; then
-    a default of every non-geometry column, so any layer is click-to-inspect
-    without needing to be configured first. Shared by both renderers.
-    """
-    if "popup" in entry:
-        return [str(a) for a in entry["popup"]] if isinstance(entry["popup"], list) else []
-    if meta["popup"]:
-        return [str(a) for a in meta["popup"]]
-    return dbq.non_geom_columns(cols)
 
 
 def _compare_metadata(compare, layer_ids_by_ref):
@@ -195,25 +149,12 @@ def compile_style(conn, view):
             layer_ids_by_ref[ref] = [sid]
             continue
 
-        parsed = dbq.split_layer_ref(ref)
-        if parsed is None:
+        vector = resolve_vector_layer(conn, entry)
+        if vector is None:
             continue
-        schema, table = parsed
-        cols = dbq.columns(conn, schema, table)
-        if cols is None or not dbq.has_geom(cols):
-            continue
-
-        meta = dbq.layer_meta(conn, schema, table)
-        eff = dict(meta["style"])
-        entry_style = entry.get("style")
-        if isinstance(entry_style, dict):
-            eff.update({k: v for k, v in entry_style.items() if v is not None})
-
-        visible = entry["visible"] if isinstance(entry.get("visible"), bool) else meta["visible"]
-        label = entry.get("label") or meta["label"] or table
-        popup_attrs = resolve_popup_attrs(entry, meta, cols)
-
-        gclass = dbq.geometry_class(conn, schema, table)
+        schema, table = vector.schema, vector.table
+        eff, visible, label = vector.style, vector.visible, vector.label
+        popup_attrs, gclass = vector.popup, vector.geometry
         count = dbq.feature_count(conn, schema, table)
 
         base_color = DEFAULT_PALETTE[vec_index % len(DEFAULT_PALETTE)]

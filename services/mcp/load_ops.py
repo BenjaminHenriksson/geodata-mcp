@@ -8,6 +8,7 @@ from psycopg.rows import dict_row
 
 import db
 import geometry
+import job_ops
 import provenance
 import sessions
 import sqlguard
@@ -168,17 +169,8 @@ def ingest(workspace_id: str, dataset_id: str, table_name: str | None, target: s
                              "pass an explicit table_name to load this dataset alongside it"}
         payload.update({"target_schema": target_schema, "table_name": tname})
 
-    job_id = db.enqueue_job(job_kind, payload, workspace_id)
-    job = db.wait_for_job(job_id, timeout_s=8.0)
-    reply = {"job_id": job_id, "kind": job_kind, "status": job["status"] if job else "queued"}
-    if job:
-        if job.get("result"):
-            reply["result"] = job["result"]
-        if job.get("error"):
-            reply["error"] = job["error"]
-    if reply["status"] in ("queued", "running"):
-        reply["note"] = "still running — poll with load(op='status', job_id=...)"
-    return geometry.jsonable_row(reply)
+    return job_ops.submit(job_kind, payload, workspace_id,
+                          "still running — poll with load(op='status', job_id=...)")
 
 
 # ── inline rows ──────────────────────────────────────────────────────────────

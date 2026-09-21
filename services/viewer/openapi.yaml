@@ -36,7 +36,7 @@ info:
     name: "AGPL-3.0-only"
     url: "https://www.gnu.org/licenses/agpl-3.0.html"
 externalDocs:
-  description: "Architecture and implementation contracts (README.md, geodata-mcp-architecture.md, CONTRACTS.md)."
+  description: "Architecture and implementation contracts (README.md, CONTRACTS.md)."
   url: "https://www.sundsvall.se"
 servers:
   - url: "http://localhost:8080"

@@ -138,7 +138,7 @@ export default function () {
 }
 
 // Emit both the standard end-of-test summary and a machine-readable JSON file so
-// results can be archived against the template in docs/lasttest.md.
+// archive results with the tested revision and deployment configuration.
 export function handleSummary(data) {
   return {
     stdout: textSummary(data),

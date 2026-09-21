@@ -13,7 +13,6 @@ import zipfile
 
 from minio import Minio
 from minio.error import S3Error
-from psycopg.types.json import Json
 
 import dbutil
 from connectors import files

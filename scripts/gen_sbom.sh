@@ -19,7 +19,7 @@
 # CI note: run this in a job that only READS the repo; the generated files under
 # ${OUT_DIR} are build artefacts. Compare against the checked-in curated BOM and
 # fail the build if a new *direct* dependency appears that is not yet inventoried
-# in docs/beroenden.md.
+# in the service dependency manifests.
 
 set -euo pipefail
 
@@ -130,4 +130,4 @@ fi
 
 echo
 echo "Done. Canonical curated BOM stays at: ${ROOT_DIR}/sbom/geodata-mcp.cdx.json"
-echo "Update docs/beroenden.md whenever a new DIRECT dependency is introduced."
+echo "Regenerate the BOM whenever a direct dependency is introduced."

@@ -27,6 +27,24 @@ def connect() -> psycopg.Connection:
     return psycopg.connect(DATABASE_URL_APP, row_factory=dict_row, autocommit=False)
 
 
+def dataset_source(conn, dataset_id) -> dict:
+    """Look up the remote dataset required by vector ingestion."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT d.id, d.external_id, s.url AS source_url
+                 FROM catalog.datasets d
+                 JOIN catalog.sources s ON s.id = d.source_id
+                WHERE d.id = %s::uuid""",
+            (str(dataset_id),),
+        )
+        dataset = cur.fetchone()
+    if dataset is None:
+        raise ValueError(f"unknown dataset_id: {dataset_id}")
+    if not dataset["source_url"]:
+        raise ValueError("dataset's source has no url")
+    return dataset
+
+
 def check_table_name(name: str) -> str:
     if not isinstance(name, str) or not IDENT_RE.match(name):
         raise ValueError(f"invalid table name: {name!r} (must match ^[a-z0-9_]{{1,63}}$)")

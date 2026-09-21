@@ -1,7 +1,7 @@
 # Geodata MCP v2 — Implementation Contracts
 
-This file is the binding spec for all services. It concretizes `geodata-mcp-architecture.md`
-for the v1 build. When architecture doc and this file disagree, this file wins.
+Reference for the database schemas, service interfaces, tool arguments and job
+payloads. Setup and operational guidance live in `README.md` and `deploy/README.md`.
 
 Scope notes for this build:
 - Target municipality: **Sundsvall** (GovTech Pilot 3, `data_sources.xlsx`). CRS **EPSG:3014** (SWEREF 99 17 15).
@@ -118,7 +118,7 @@ catalog.datasets (
   Workspaces are **namespacing and lifecycle, not tenancy**: because all agent SQL shares one
   `agent_ro` role, every authenticated principal can read every workspace. Writes are
   workspace-scoped (the `layer` tool resolves the schema from the caller's active workspace);
-  reads are not. Per-principal read isolation requires RLS or per-user roles (§11).
+  reads are not. Per-principal read isolation requires RLS or per-user roles.
 - Workspace tables ingested by the worker (`target='workspace'`) must be
   `ALTER TABLE … OWNER TO agent_ws` after load, or the `layer` tool cannot mutate them.
 - The attribution key stored in `provenance`/`jobs`/`map_views`/`query_log` is the
@@ -190,7 +190,7 @@ app.query_log  (query_id uuid PK DEFAULT gen_random_uuid(), ts timestamptz DEFAU
                 row_count int, duration_ms int, error text)
 ```
 
-Event triggers (backstop, §8.1): on `ddl_command_end` and `sql_drop`, if the affected object's
+Event triggers: on `ddl_command_end` and `sql_drop`, if the affected object's
 schema matches `ws_%` or `ref`, insert an `app.provenance` row with kind `ddl_event`, reading
 `current_setting('app.workspace_id', true)` for attribution. The `layer` and `workspace` tools
 set `app.workspace_id` inside their transactions.
@@ -246,7 +246,7 @@ Single Python process, two responsibilities:
      CSV gets `-lco GEOMETRY=AS_WKT`. GeoJSON in 4326 (`-t_srs EPSG:4326`), others native 3014.
    - `change_detect {area_wkt_3014, table_name, target_schema, concepts, collection_a,
      collection_b, threshold, min_area_m2, method}` — SAM 3 orthophoto change detection
-     (architecture §7, method `mask_compare` only). STAC item search over the area per
+     (method `mask_compare` only). STAC item search over the area per
      collection (public endpoints; items filtered to `spektraltyp in (rgb, rgbi)`), window
      grid in EPSG:3006 at 1008 px / 96 px overlap at the pair's coarsest GSD (≤ 128 tiles),
      per-vintage `gdal.BuildVRT` over `/vsicurl/` COG hrefs (Basic auth via GDAL config,
@@ -469,26 +469,3 @@ FastAPI on :8001. DB via `DATABASE_URL_APP` (read paths only, plus workspace-man
 
 Identifier safety everywhere: schema/table names validated `^[a-z0-9_]{1,63}$` and quoted via
 `format('%I')`/psycopg `sql.Identifier`; never interpolated raw.
-
-## Definition of done for this build
-
-1. `docker compose up` from clean → all services healthy.
-2. Sundsvall WFS registered + harvested (~900 datasets in catalog), ≥ 12 pilot layers ingested
-   into `ref`, plan-PDF ingested into doc with chunks embedded.
-3. `search("strandskydd")` returns the right dataset via hybrid search (embeddings live).
-4. Full agent flow over MCP HTTP: search → load → query (query_id logged) → layer create
-   (provenance row) → map upsert → URL opens in Chrome and renders → export GPKG verified
-   with ogrinfo; citation sidecar present.
-5. Map updates picked up by an open browser page within ~5 s via ETag polling.
-6. `/mcp` returns 401 without a valid bearer key; a reconnecting client with the same key
-   lands in the same workspace with its layers intact.
-7. Both renderers draw the same view: `/v/<id>` (MapLibre) and `/v/<id>?renderer=origo`
-   (Origo, EPSG:3014, legend + feature-info popups).
-8. Every register kind has a live connector, verified against the official sources in
-   `data_sources.xlsx` (`scripts/connector_test.py`): all 18 named Sundsvall/Trafikverket WFS
-   layers ingest, the GWC WMTS renders on a map, a text page lands in doc.chunks, and the
-   authenticated Lantmäteriet STAC + WMS harvest with `LANTMATERIET_CREDENTIALS`.
-9. Orthophoto change detection end to end (`scripts/change_detect_test.py`, segmenter running
-   on the host): `analyze(op='run', id='change_detect')` over two Lantmäteriet T2 vintages writes the
-   candidates + coverage tables into the workspace, and the map view renders them over the
-   årsvisa ortofoto WMS through `/wmsref` (migration 003 applied).

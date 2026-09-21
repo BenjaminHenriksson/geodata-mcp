@@ -20,6 +20,7 @@ from psycopg import sql as pgsql
 
 import db
 import geometry
+import job_ops
 import sessions
 import sqlguard
 
@@ -175,19 +176,10 @@ def _run_change_detect(workspace_id: str, area: str | None, concepts: list | Non
                "collection_a": collection_a, "collection_b": collection_b,
                "threshold": thr, "min_area_m2": min_area, "method": method,
                "gsd": proc_gsd}
-    job_id = db.enqueue_job("change_detect", payload, workspace_id)
-    job = db.wait_for_job(job_id, timeout_s=8.0)
-    reply = {"job_id": job_id, "kind": "change_detect",
-             "status": job["status"] if job else "queued"}
-    if job:
-        if job.get("result"):
-            reply["result"] = job["result"]
-        if job.get("error"):
-            reply["error"] = job["error"]
-    if reply["status"] in ("queued", "running"):
-        reply["note"] = ("SAM3 inference typically runs minutes (the first call also loads "
-                         "the model) — poll with analyze(op='status', job_id=...)")
-    return geometry.jsonable_row(reply)
+    return job_ops.submit(
+        "change_detect", payload, workspace_id,
+        "SAM3 inference typically runs minutes (the first call also loads "
+        "the model) — poll with analyze(op='status', job_id=...)")
 
 
 _CHANGE_DETECT_SCHEMA = {

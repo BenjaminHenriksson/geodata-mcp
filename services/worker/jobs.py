@@ -4,7 +4,6 @@ and failed → back to queued). One bad job never kills the loop."""
 
 import json
 import logging
-import os
 import re
 import time
 

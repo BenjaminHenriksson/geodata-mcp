@@ -45,6 +45,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  tests:
+    name: Regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Create test environment
+        run: |
+          uv venv --python 3.12
+          uv pip install -r services/mcp/requirements.txt -r services/viewer/requirements.txt pytest
+      - name: Verify renderer, job and connector behavior
+        run: .venv/bin/python -m pytest -q tests
+
   # ---------------------------------------------------------------------------
   # (a) lint — statisk kontroll: ruff, py_compile och hadolint (#4, #30)
   # ---------------------------------------------------------------------------
