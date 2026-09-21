@@ -83,7 +83,9 @@ def _html(body: str, nonce: str, status_code: int = 200,
         "Content-Security-Policy": _CSP.format(
             nonce=nonce, eval=" 'unsafe-eval'" if allow_eval else ""),
         "X-Content-Type-Options": "nosniff",
-        "Referrer-Policy": "no-referrer",
+        # Identify the public site to the basemap provider without disclosing
+        # capability-bearing view paths or query parameters.
+        "Referrer-Policy": "strict-origin",
     })
 
 
