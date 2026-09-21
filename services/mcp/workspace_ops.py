@@ -40,17 +40,19 @@ def list_workspaces(api_key_id: str) -> dict:
                     "switch with workspace(op='use', name=...)"}
 
 
-def create(api_key_id: str, name: str) -> dict:
+def create(api_key_id: str, name: str, activate: bool = True) -> dict:
     try:
-        w = sessions.get_or_create_workspace(api_key_id, name, activate=True)
+        w = sessions.get_or_create_workspace(api_key_id, name, activate=activate)
     except ValueError as e:
         return {"error": str(e)}
-    out = {"workspace": w.name, "ws_schema": w.ws_schema, "active": True,
+    out = {"id": w.id, "workspace": w.name, "ws_schema": w.ws_schema, "active": w.is_active,
            "created": w.created}
     out["note"] = ("new workspaces start empty; previous layers live in their own workspaces"
                    if w.created else
                    f"a workspace named {name!r} already existed — switched to it with its "
                    "layers intact rather than creating a second one")
+    if not activate:
+        out["note"] = "pass this id as workspace_id on tool calls; the shared default was not changed"
     return out
 
 
@@ -62,7 +64,7 @@ def use(api_key_id: str, name: str) -> dict:
             if row is None:
                 return {"error": f"no workspace named {name!r} — see workspace(op='list')"}
             sessions._activate(conn, api_key_id, row[0])
-    return {"workspace": name, "ws_schema": row[2], "active": True}
+    return {"id": row[0], "workspace": name, "ws_schema": row[2], "active": True}
 
 
 def rename(api_key_id: str, name: str, new_name: str) -> dict:
@@ -114,7 +116,7 @@ def current(workspace: sessions.Workspace) -> dict:
                 ORDER BY c.relname""",
             (workspace.ws_schema,),
         ).fetchall()
-    return {"workspace": workspace.name,
+    return {"id": workspace.id, "workspace": workspace.name, "active": workspace.is_active,
             "ws_schema": workspace.ws_schema,
             "layer_count": counts.get(workspace.ws_schema, 0),
             "layers": [t[0] for t in tables],

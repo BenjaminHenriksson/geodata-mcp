@@ -60,6 +60,12 @@ A key owns named workspaces and one active workspace. Reconnecting preserves the
 active workspace and its layers. Switching through the tool or manager affects
 the next tool call. Workspace deletion is explicit; there is no idle expiry.
 
+Concurrent conversations sharing a key should create workspaces with
+`workspace(op="new", name="analysis-name", activate=False)` and pass the returned
+`id` as `workspace_id` on every tool call. Explicit selection checks ownership
+and never changes the shared default; omitting it retains the active-workspace
+behavior for existing clients. A shared key still represents one principal.
+
 Both map renderers consume the same saved specification. MapLibre uses Web
 Mercator with CARTO Positron; Origo uses EPSG:3014 and the configured municipal
 WMS backdrop. MapLibre uses GeoJSON for smaller layers and vector tiles above

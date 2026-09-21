@@ -5,7 +5,7 @@ transport middleware in server.py). Only the key's SHA-256 digest is ever stored
 leaked app.api_keys row is not a replayable credential.
 
 Workspaces are durable rows in app.workspaces owned by an API key; exactly one is
-'active' per key and receives all reads/writes. This replaces the old keying on the
+'active' per key and is the default when a request omits workspace_id. This replaces the old keying on the
 per-connection mcp-session-id header, which lost the workspace on every reconnect.
 """
 
@@ -37,6 +37,7 @@ class Workspace:
     ws_schema: str   # ws_<8 hex>
     api_key_id: str
     created: bool = False  # True only when this call created the row (see workspace op='new')
+    is_active: bool = False
 
 
 def hash_key(raw: str) -> str:
@@ -180,7 +181,7 @@ def get_or_create_workspace(api_key_id: str, name: str, activate: bool = False) 
             # connections cannot both create the same name.
             _lock_key(conn, api_key_id)
             row = conn.execute(
-                """SELECT id::text, name, ws_schema FROM app.workspaces
+                """SELECT id::text, name, ws_schema, is_active FROM app.workspaces
                     WHERE api_key_id = %s AND name = %s""",
                 (api_key_id, name),
             ).fetchone()
@@ -199,7 +200,7 @@ def get_or_create_workspace(api_key_id: str, name: str, activate: bool = False) 
                         with conn.transaction():
                             row = conn.execute(
                                 """INSERT INTO app.workspaces (api_key_id, name, ws_schema)
-                                   VALUES (%s, %s, %s) RETURNING id::text, name, ws_schema""",
+                                   VALUES (%s, %s, %s) RETURNING id::text, name, ws_schema, is_active""",
                                 (api_key_id, name, _new_ws_schema()),
                             ).fetchone()
                         created = True
@@ -212,11 +213,11 @@ def get_or_create_workspace(api_key_id: str, name: str, activate: bool = False) 
             if activate:
                 _activate(conn, api_key_id, row[0])
     return Workspace(id=row[0], name=row[1], ws_schema=row[2], api_key_id=api_key_id,
-                     created=created)
+                     created=created, is_active=bool(activate or row[3]))
 
 
-def resolve(ctx) -> Workspace:
-    """The caller's active workspace (creating/activating 'default' when none is).
+def resolve(ctx, workspace_id: str | None = None) -> Workspace:
+    """An explicitly selected owned workspace, or the caller's legacy active default.
 
     Called at the top of every tool; also bumps last_used on key and workspace.
     """
@@ -226,6 +227,22 @@ def resolve(ctx) -> Workspace:
     api_key_id = principal_id_from_raw(raw)
     if api_key_id is None:
         raise AuthError("unknown or disabled API key")
+    if workspace_id is not None:
+        try:
+            selected = str(uuidlib.UUID(workspace_id))
+        except (ValueError, TypeError, AttributeError):
+            raise AuthError("workspace_id must be a workspace UUID") from None
+        with db.app_pool().connection() as conn:
+            row = conn.execute(
+                """UPDATE app.workspaces SET last_used = now()
+                     WHERE id = %s AND api_key_id = %s
+                     RETURNING id::text, name, ws_schema, is_active""",
+                (selected, api_key_id),
+            ).fetchone()
+        if row is None:
+            raise AuthError("unknown workspace or workspace belongs to another principal")
+        return Workspace(id=row[0], name=row[1], ws_schema=row[2],
+                         api_key_id=api_key_id, is_active=bool(row[3]))
     with db.app_pool().connection() as conn:
         row = conn.execute(
             """UPDATE app.workspaces SET last_used = now()
@@ -246,20 +263,20 @@ def resolve(ctx) -> Workspace:
                     (api_key_id,),
                 ).fetchone()
     if row is not None:
-        return Workspace(id=row[0], name=row[1], ws_schema=row[2], api_key_id=api_key_id)
+        return Workspace(id=row[0], name=row[1], ws_schema=row[2], api_key_id=api_key_id, is_active=True)
     return get_or_create_workspace(api_key_id, DEFAULT_WORKSPACE, activate=True)
 
 
 def workspace_by_id(workspace_id: str) -> Workspace | None:
     with db.app_pool().connection() as conn:
         row = conn.execute(
-            """SELECT id::text, name, ws_schema, api_key_id::text
+            """SELECT id::text, name, ws_schema, api_key_id::text, is_active
                  FROM app.workspaces WHERE id = %s""",
             (workspace_id,),
         ).fetchone()
     if row is None:
         return None
-    return Workspace(id=row[0], name=row[1], ws_schema=row[2], api_key_id=row[3])
+    return Workspace(id=row[0], name=row[1], ws_schema=row[2], api_key_id=row[3], is_active=bool(row[4]))
 
 
 def ws_schema_for(workspace_id: str) -> str:

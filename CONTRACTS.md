@@ -469,3 +469,11 @@ FastAPI on :8001. DB via `DATABASE_URL_APP` (read paths only, plus workspace-man
 
 Identifier safety everywhere: schema/table names validated `^[a-z0-9_]{1,63}$` and quoted via
 `format('%I')`/psycopg `sql.Identifier`; never interpolated raw.
+
+## Explicit workspace selection
+
+All eight tools accept optional `workspace_id` (an owned workspace UUID). It selects
+only that request and never switches the key's active default. Invalid or unowned
+IDs fail without falling back. `workspace(op="new", activate=False)` creates or
+returns a workspace without switching; workspace replies include `id`. Legacy
+calls that omit the selector keep using the key's active workspace.

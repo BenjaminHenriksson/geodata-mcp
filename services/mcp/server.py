@@ -95,9 +95,9 @@ class BearerAuthMiddleware:
         return await self.app(scope, receive, send)
 
 
-def _ws(ctx: Context | None) -> sessions.Workspace:
-    """The caller's active workspace (raises sessions.AuthError)."""
-    return sessions.resolve(ctx if ctx is not None else mcp.get_context())
+def _ws(ctx: Context | None, workspace_id: str | None = None) -> sessions.Workspace:
+    """Resolve the request's owned workspace (raises sessions.AuthError)."""
+    return sessions.resolve(ctx if ctx is not None else mcp.get_context(), workspace_id)
 
 
 def _auth_error(e: Exception) -> dict:
@@ -111,7 +111,7 @@ async def healthz(request: Request) -> JSONResponse:
 
 @mcp.tool()
 def search(query: str | None = None, id: str | None = None, kind: str | None = None,
-           limit: int = 15, ctx: Context = None) -> dict:
+           limit: int = 15, ctx: Context = None, workspace_id: str | None = None) -> dict:
     """Search the municipal geodata catalog (Sundsvall) — datasets, sources and documents.
 
     Hybrid search: fuzzy trigram matching plus semantic vector similarity over dataset
@@ -132,9 +132,10 @@ def search(query: str | None = None, id: str | None = None, kind: str | None = N
     The whole catalog is also plain SQL: catalog.datasets and catalog.sources are readable
     through the query tool. Data model: schemas catalog/ref/doc/app plus your private
     workspace schema; geometry column 'geom', SRID 3014 (SWEREF 99 17 15, metres).
+    workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:
-        _ws(ctx)   # resolve the principal first: same auth path as every other tool
+        _ws(ctx, workspace_id)   # resolve the principal first: same auth path as every other tool
         if id:
             return search_ops.dataset_detail(str(id))
         if not query:
@@ -152,7 +153,7 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
          slug: str | None = None, license: str = "", notes: str = "",
          dataset_id: str | None = None, table_name: str | None = None, target: str = "ref",
          rows: list | None = None, source: str | None = None, crs: str | None = None,
-         job_id: int | None = None, ctx: Context = None) -> dict:
+         job_id: int | None = None, ctx: Context = None, workspace_id: str | None = None) -> dict:
     """Register data sources and bring datasets into the database. Ops:
 
     - op='register' {kind, url, title, slug?, license?, notes?}: add a source to the catalog.
@@ -180,9 +181,10 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
     ingested into the searchable document corpus).
 
     After ingesting, explore with the query tool and visualize via layer + map.
+    workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:
-        w = _ws(ctx)
+        w = _ws(ctx, workspace_id)
         if op == "register":
             return load_ops.register(w.id, kind or "", url, title or "", slug, license, notes)
         if op == "ingest":
@@ -212,7 +214,7 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
 @mcp.tool()
 def analyze(op: str, id: str | None = None, params: dict | None = None,
             job_id: int | None = None, timeout_s: float | None = None,
-            ctx: Context = None) -> dict:
+            ctx: Context = None, workspace_id: str | None = None) -> dict:
     """Run long-running analysis processors (model inference over imagery etc.).
 
     Results land as LAYERS in your active workspace — read them with the query
@@ -232,9 +234,10 @@ def analyze(op: str, id: str | None = None, params: dict | None = None,
 
     First processor: 'change_detect' — SAM3 orthophoto change detection between two
     imagery vintages. Start with op='list'.
+    workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:
-        w = _ws(ctx)
+        w = _ws(ctx, workspace_id)
         if op == "list":
             return analysis_ops.list_processors()
         if op == "describe":
@@ -257,7 +260,7 @@ def analyze(op: str, id: str | None = None, params: dict | None = None,
 
 
 @mcp.tool()
-def query(sql: str, limit: int = 500, ctx: Context = None) -> dict:
+def query(sql: str, limit: int = 500, ctx: Context = None, workspace_id: str | None = None) -> dict:
     """Run read-only SQL (PostGIS 3.5 + pgvector) — the analysis workhorse.
 
     One statement, starting with SELECT/WITH/EXPLAIN/SHOW/TABLE/VALUES; no semicolons.
@@ -288,9 +291,10 @@ def query(sql: str, limit: int = 500, ctx: Context = None) -> dict:
     Every call is logged with the referenced tables and returns a query_id — cite it when
     quoting numbers. Returns {query_id, columns, rows, row_count, truncated,
     referenced_tables}. Writes are impossible here: derive new tables with the layer tool.
+    workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:
-        w = _ws(ctx)
+        w = _ws(ctx, workspace_id)
         return query_ops.run_query(w.id, sql, limit)
     except sessions.AuthError as e:
         return _auth_error(e)
@@ -300,7 +304,7 @@ def query(sql: str, limit: int = 500, ctx: Context = None) -> dict:
 
 @mcp.tool()
 def workspace(op: str = "current", name: str | None = None, new_name: str | None = None,
-              ctx: Context = None) -> dict:
+              ctx: Context = None, workspace_id: str | None = None, activate: bool = True) -> dict:
     """Manage your durable workspaces (named containers for layers and maps).
 
     Workspaces belong to your API key and survive reconnects and restarts: coming back
@@ -309,10 +313,11 @@ def workspace(op: str = "current", name: str | None = None, new_name: str | None
 
     - op='current' {}: the active workspace and its layers (default when op omitted).
     - op='list' {}: all your workspaces with layer/map counts and last-used times.
-    - op='new' {name}: create a workspace and switch to it (name: lowercase, digits,
+    - op='new' {name, activate?}: create a workspace and normally switch to it (name: lowercase, digits,
       '-'/'_', max 40 chars; e.g. 'flood-analysis'). If that name already exists you are
       switched to it instead, with its layers intact — the reply's 'created' flag says which
-      happened. Max 20 workspaces per key.
+      happened. activate=False leaves the shared default unchanged. Returns its id.
+      Max 20 workspaces per key.
     - op='delete' also deletes that workspace's map views (their layers are going away).
     - op='use' {name}: switch the active workspace — later layer/map/query calls run there.
     - op='rename' {name, new_name}: relabel a workspace (tables untouched).
@@ -321,9 +326,10 @@ def workspace(op: str = "current", name: str | None = None, new_name: str | None
 
     Use separate workspaces for separate analyses so layer names never collide and
     old work stays browsable — the human-facing manager UI lives at /workspaces.
+    workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:
-        w = _ws(ctx)
+        w = _ws(ctx, workspace_id)
         if op in ("current", ""):
             return workspace_ops.current(w)
         if op == "list":
@@ -331,7 +337,7 @@ def workspace(op: str = "current", name: str | None = None, new_name: str | None
         if op == "new":
             if not name:
                 return {"error": "new needs a name"}
-            return workspace_ops.create(w.api_key_id, name)
+            return workspace_ops.create(w.api_key_id, name, activate=activate)
         if op == "use":
             if not name:
                 return {"error": "use needs a name — see op='list'"}
@@ -355,7 +361,7 @@ def workspace(op: str = "current", name: str | None = None, new_name: str | None
 def layer(op: str, name: str | None = None, sql: str | None = None, notes: str = "",
           style: dict | None = None, key_column: str | None = None, values: dict | None = None,
           popup: list | None = None, label: str | None = None, visible: bool | None = None,
-          new_name: str | None = None, ctx: Context = None) -> dict:
+          new_name: str | None = None, ctx: Context = None, workspace_id: str | None = None) -> dict:
     """Create and manage tables in your active workspace — the ONLY write path.
 
     Every op is recorded in the append-only provenance ledger. Ops:
@@ -377,9 +383,10 @@ def layer(op: str, name: str | None = None, sql: str | None = None, notes: str =
     Layer-then-map is how you show results to the user: create a layer from a SELECT,
     then map(op='upsert', layers=[...]) and give the user the returned URL. Layers live
     in the active workspace (workspace tool to switch).
+    workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:
-        w = _ws(ctx)
+        w = _ws(ctx, workspace_id)
         if op == "create":
             if not name or not sql:
                 return {"error": "create needs name and sql"}
@@ -413,7 +420,7 @@ def layer(op: str, name: str | None = None, sql: str | None = None, notes: str =
 @mcp.tool()
 def map(op: str = "upsert", view_id: str | None = None, title: str | None = None,
         layers: list | None = None, basemap: str = "positron",
-        extent_3014: list | None = None, legend: bool = True, ctx: Context = None) -> dict:
+        extent_3014: list | None = None, legend: bool = True, ctx: Context = None, workspace_id: str | None = None) -> dict:
     """Create or update an interactive web map and get a shareable URL.
 
     - op='upsert' {view_id?, title?, layers, basemap?, extent_3014?, legend?}: layers is a
@@ -434,9 +441,10 @@ def map(op: str = "upsert", view_id: str | None = None, title: str | None = None
     both renderers. Typical flow: layer(op='create', ...) with a styled
     result, then map(op='upsert', layers=[{'ref': 'ws_x.result',
     'style': {'fill': '#e31a1c', 'opacity': 0.5}, 'popup': ['name', 'area_m2']}]).
+    workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:
-        w = _ws(ctx)
+        w = _ws(ctx, workspace_id)
         if op == "upsert":
             return map_ops.upsert(w.id, view_id, title, layers, basemap, extent_3014, legend)
         if op == "get":
@@ -453,7 +461,7 @@ def map(op: str = "upsert", view_id: str | None = None, title: str | None = None
 
 
 @mcp.tool()
-def export(layers: list, format: str = "gpkg", cite: bool = True, ctx: Context = None) -> dict:
+def export(layers: list, format: str = "gpkg", cite: bool = True, ctx: Context = None, workspace_id: str | None = None) -> dict:
     """Export layers to a standard GIS file and get a download URL (valid 24 h).
 
     layers: list of 'schema.table' refs — shared 'ref.<table>' layers and/or your own
@@ -465,9 +473,10 @@ def export(layers: list, format: str = "gpkg", cite: bool = True, ctx: Context =
     Waits up to 30 s for the export job; if still running you get {job_id, status} — poll
     with load(op='status', job_id=...) and call export again when done.
     Returns {url, sidecar_url, format, expires_hours}.
+    workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:
-        w = _ws(ctx)
+        w = _ws(ctx, workspace_id)
         return export_ops.run_export(w.id, layers, format, cite)
     except sessions.AuthError as e:
         return _auth_error(e)
