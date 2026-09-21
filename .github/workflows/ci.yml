@@ -57,6 +57,12 @@ jobs:
           uv pip install -e . -r services/mcp/requirements.txt -r services/viewer/requirements.txt pytest
       - name: Verify renderer, job and connector behavior
         run: .venv/bin/python -m pytest -q tests
+      - name: Generate API reference from routes
+        run: .venv/bin/python scripts/dump_openapi.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viewer-openapi
+          path: build/openapi.json
 
   migrations:
     name: Database migration regression tests

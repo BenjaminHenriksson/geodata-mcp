@@ -1,76 +1,44 @@
 #!/usr/bin/env python3
-"""Regenerate services/viewer/openapi.json from the running FastAPI app.
+"""Export the viewer's route-generated schema without a database or network connection.
 
-This dumps FastAPI's *own* auto-generated OpenAPI schema (the source of truth for
-what the code actually serves) so CI can diff it and catch drift. The curated,
-hand-maintained companion document is services/viewer/openapi.yaml.
-
-The viewer is launched as ``main:app`` with services/viewer as the working
-directory (see services/viewer/Dockerfile), and its modules import each other
-flatly (``import dbq``, ``import page`` …). We therefore put services/viewer on
-sys.path and import ``main`` — the same entrypoint uvicorn uses — which is what
-``services.viewer.main:app`` refers to. Building app.openapi() performs no
-database or network access.
-
-Usage:
-    python scripts/dump_openapi.py            # writes services/viewer/openapi.json
-    python scripts/dump_openapi.py --check    # non-zero exit if the file is stale
+Run with the viewer dependencies installed. Output defaults to build/openapi.json;
+use --output PATH for release artifacts, or --check to compare an existing export.
 """
+import argparse
+import importlib
 import json
-import os
+from pathlib import Path
 import sys
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VIEWER_DIR = os.path.join(REPO_ROOT, "services", "viewer")
-OUT_PATH = os.path.join(VIEWER_DIR, "openapi.json")
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def load_app():
-    """Import services/viewer/main.py and return its FastAPI ``app``."""
-    if REPO_ROOT not in sys.path:
-        sys.path.insert(0, REPO_ROOT)
-    if VIEWER_DIR not in sys.path:
-        sys.path.insert(0, VIEWER_DIR)
-    import importlib
-
-    main = importlib.import_module("main")
-    return main.app
+    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(ROOT / 'services/viewer'))
+    return importlib.import_module('main').app
 
 
-def render() -> str:
-    app = load_app()
-    schema = app.openapi()
-    return json.dumps(schema, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
+def render():
+    return json.dumps(load_app().openapi(), indent=2, ensure_ascii=False) + '\n'
 
 
-def main(argv=None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-    check = "--check" in argv
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path, default=ROOT / 'build/openapi.json')
+    parser.add_argument('--check', action='store_true')
+    args = parser.parse_args()
     text = render()
-
-    if check:
-        try:
-            with open(OUT_PATH, encoding="utf-8") as fh:
-                current = fh.read()
-        except FileNotFoundError:
-            current = None
-        if current != text:
-            sys.stderr.write(
-                f"{OUT_PATH} is out of date; run: python scripts/dump_openapi.py\n")
+    if args.check:
+        if not args.output.exists() or args.output.read_text(encoding='utf-8') != text:
+            print(f'{args.output} is missing or stale; regenerate it with --output {args.output}', file=sys.stderr)
             return 1
-        print(f"{OUT_PATH} is up to date.")
-        return 0
-
-    with open(OUT_PATH, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    try:
-        rel = os.path.relpath(OUT_PATH, REPO_ROOT)
-    except ValueError:
-        rel = OUT_PATH
-    paths = len(json.loads(text).get("paths", {}))
-    print(f"wrote {rel} ({len(text)} bytes, {paths} paths)")
+    else:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(text, encoding='utf-8')
+    print(f'{args.output}: {len(json.loads(text)["paths"])} paths')
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     raise SystemExit(main())

@@ -11,6 +11,7 @@ from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+import api_docs as api
 import compile_maplibre
 import compile_origo
 import dbq
@@ -40,7 +41,15 @@ async def lifespan(_app):
     dbq.close_pool()
 
 
-app = FastAPI(title="geodata viewer", lifespan=lifespan)
+app = FastAPI(
+    title="Geodata MCP – Viewer & Data API", version="0.1.0", lifespan=lifespan,
+    description=("Map pages, styles, GeoJSON, vector tiles, WMS proxy and workspace management. "
+                 "Map/data endpoints use unguessable capability URLs; the requested layer must "
+                 "belong to the named view. The workspace manager uses a signed HttpOnly cookie "
+                 "and CSRF-protected actions. The separate MCP service at `/mcp` accepts a bearer "
+                 "API key or OAuth token. Bundled assets are served under `/static/`."),
+    license_info={"name": "AGPL-3.0-only", "url": "https://www.gnu.org/licenses/agpl-3.0.html"},
+)
 app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")
 # Prometheus scrape target (#81). ASGI sub-app; degrades to a plain-text 200 if
 # prometheus_client is unavailable, so mounting never breaks startup.
@@ -144,7 +153,10 @@ def _checked_layer(conn, layer, view_id):
     return schema, table, dbq.non_geom_columns(cols)
 
 
-@app.get("/healthz")
+@app.get("/healthz", tags=["health"], summary="Liveness probe", responses={
+    200: api.content("Service is up.", schema={"type": "object", "required": ["ok"],
+                     "properties": {"ok": {"type": "boolean"}}}, example={"ok": True}),
+})
 def healthz():
     return {"ok": True}
 
@@ -166,20 +178,25 @@ def _require_manager_enabled():
                             detail="workspace manager disabled — set VIEWER_SECRET in .env")
 
 
-@app.get("/")
+@app.get("/", tags=["manager"], summary="Redirect to the workspace manager",
+         response_class=RedirectResponse, status_code=302)
 def index():
     return RedirectResponse("/workspaces", status_code=302)
 
 
-@app.get("/login", response_class=HTMLResponse)
+@app.get("/login", tags=["manager"], summary="API-key sign-in form",
+         response_class=HTMLResponse, responses=api.MANAGER_DISABLED)
 def login_form():
     _require_manager_enabled()
     n = _nonce()
     return _html(page.login_page(), n)
 
 
-@app.post("/login", response_class=HTMLResponse)
-def login(key: str = Form("")):
+@app.post("/login", tags=["manager"], summary="Sign in", response_class=RedirectResponse,
+          status_code=303, responses={**api.MANAGER_DISABLED,
+              303: {"description": "Set signed gdw_auth cookie and redirect to /workspaces."},
+              401: api.content("Unknown or disabled API key; login page.", "text/html", {"type": "string"})})
+def login(key: str = Form("", description="API key used as the MCP bearer token; never stored in the cookie.")):
     _require_manager_enabled()
     key = (key or "").strip()
     key_id = None
@@ -194,14 +211,16 @@ def login(key: str = Form("")):
     return resp
 
 
-@app.post("/logout")
+@app.post("/logout", tags=["manager"], summary="Clear the session cookie and redirect to /login",
+          response_class=RedirectResponse, status_code=303)
 def logout():
     resp = RedirectResponse("/login", status_code=303)
     resp.delete_cookie(viewer_auth.COOKIE_NAME)
     return resp
 
 
-@app.get("/workspaces", response_class=HTMLResponse)
+@app.get("/workspaces", tags=["manager"], summary="Workspace manager", response_class=HTMLResponse,
+         dependencies=api.MANAGER_AUTH, responses={**api.MANAGER_DISABLED, **api.REDIRECT_LOGIN})
 def workspaces(request: Request):
     _require_manager_enabled()
     key_id = _manager_key_id(request)
@@ -212,10 +231,16 @@ def workspaces(request: Request):
     return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id)), _nonce())
 
 
-@app.post("/workspaces/action", response_class=HTMLResponse)
-def workspaces_action(request: Request, action: str = Form(""),
-                      workspace_id: str = Form(""), new_name: str = Form(""),
-                      csrf: str = Form("")):
+@app.post("/workspaces/action", tags=["manager"], summary="Activate, rename or delete an owned workspace",
+          dependencies=api.MANAGER_AUTH, response_class=RedirectResponse, status_code=303,
+          responses={**api.MANAGER_DISABLED, **api.REDIRECT_LOGIN,
+                     **api.errors({"403": "Bad CSRF token."}),
+                     303: {"description": "Action applied; redirect to /workspaces."},
+                     400: api.content("Invalid workspace, action or name; manager page.", "text/html", {"type": "string"})})
+def workspaces_action(request: Request, action: str = Form("", description="activate, rename or delete"),
+                      workspace_id: str = Form("", description="Owned workspace UUID"),
+                      new_name: str = Form("", description="Required for rename: ^[a-z0-9][a-z0-9_-]{0,39}$"),
+                      csrf: str = Form("", description="Per-principal CSRF token from the manager form")):
     _require_manager_enabled()
     key_id = _manager_key_id(request)
     if key_id is None:
@@ -243,8 +268,14 @@ def workspaces_action(request: Request, action: str = Form(""),
     return RedirectResponse("/workspaces", status_code=303)
 
 
-@app.get("/v/{view_id}/style.json")
-def style_json(view_id: str, request: Request):
+@app.get("/v/{view_id}/style.json", tags=["map"], summary="MapLibre style document",
+         responses={**api.UNKNOWN_VIEW,
+                    200: {**api.content("MapLibre GL style, version 8."), "headers": api.ETAG},
+                    304: {"description": "ETag matched; not modified.", "headers": api.ETAG}},
+         openapi_extra={"parameters": [{"name": "If-None-Match", "in": "header", "required": False,
+                                       "schema": {"type": "string"}, "description": "Previously returned ETag."}]})
+def style_json(view_id: api.ViewId, request: Request):
+    """Conditional GET fingerprints the view, layer metadata and compiler for near-live updates."""
     with dbq.get_pool().connection() as conn:
         view = _load_view(conn, view_id)
         # The compiled style depends on app.layer_meta as well as the view row, so the
@@ -258,16 +289,18 @@ def style_json(view_id: str, request: Request):
     return JSONResponse(style, headers={"ETag": etag, "Cache-Control": "no-cache"})
 
 
-@app.get("/v/{view_id}/origo.json")
-def origo_json(view_id: str):
+@app.get("/v/{view_id}/origo.json", tags=["map"], summary="Origo/OpenLayers configuration",
+         responses={**api.UNKNOWN_VIEW, 200: api.content("Renderer-agnostic view compiled to Origo configuration.")})
+def origo_json(view_id: api.ViewId):
     with dbq.get_pool().connection() as conn:
         view = _load_view(conn, view_id)
         config = compile_origo.compile_origo(conn, view)
     return JSONResponse(config, headers={"Cache-Control": "no-cache"})
 
 
-@app.get("/v/{view_id}", response_class=HTMLResponse)
-def view_page(view_id: str, renderer: str = Query(default="maplibre")):
+@app.get("/v/{view_id}", tags=["map"], summary="Interactive map page", response_class=HTMLResponse,
+         responses={**api.UNKNOWN_VIEW, **api.errors({"400": "renderer must be 'maplibre' or 'origo'."})})
+def view_page(view_id: api.ViewId, renderer: str = Query(default="maplibre", description="maplibre or origo; other values return 400")):
     if renderer not in ("maplibre", "origo"):
         raise HTTPException(status_code=400, detail="renderer must be 'maplibre' or 'origo'")
     with dbq.get_pool().connection() as conn:
@@ -278,11 +311,14 @@ def view_page(view_id: str, renderer: str = Query(default="maplibre")):
     return _html(page.maplibre_page(view_id, n), n, allow_eval=True)
 
 
-@app.get("/data/{layer}.geojson")
-def data_geojson(layer: str,
-                 view: str | None = Query(default=None),
-                 crs: int = Query(default=4326),
-                 limit: int = Query(default=DATA_DEFAULT_LIMIT)):
+@app.get("/data/{layer}.geojson", tags=["data"], summary="Layer as GeoJSON", response_class=Response,
+         responses={**api.DATA_ERRORS, 200: api.content("GeoJSON FeatureCollection.", "application/geo+json",
+                    api.GEOJSON, {"type": "FeatureCollection", "features": []})})
+def data_geojson(layer: api.LayerRef,
+                 view: str | None = Query(default=None, description=api.VIEW_QUERY, examples=[api.VIEW_EXAMPLE]),
+                 crs: int = Query(default=4326, description="4326 (WGS84) or 3014 (SWEREF 99 17 15); other values return 400"),
+                 limit: int = Query(default=DATA_DEFAULT_LIMIT, description="Max features, clamped to 1..50000")):
+    """Capability-scoped GeoJSON; large geometries are simplified and a 15 s query timeout applies."""
     if crs not in (4326, 3014):
         raise HTTPException(status_code=400, detail="crs must be 4326 or 3014")
     limit = max(1, min(limit, DATA_MAX_LIMIT))
@@ -296,9 +332,12 @@ def data_geojson(layer: str,
                     headers={"Cache-Control": "no-store"})
 
 
-@app.get("/tiles/{layer}/{z}/{x}/{y}.mvt")
-def tiles_mvt(layer: str, z: int, x: int, y: int,
-              view: str | None = Query(default=None)):
+@app.get("/tiles/{layer}/{z}/{x}/{y}.mvt", tags=["data"], summary="Mapbox Vector Tile", response_class=Response,
+         responses={**api.DATA_ERRORS, 200: api.content("MVT tile.", "application/vnd.mapbox-vector-tile", api.BINARY),
+                    204: {"description": "Empty tile; no features in range."}})
+def tiles_mvt(layer: api.LayerRef, z: int, x: int, y: int,
+              view: str | None = Query(default=None, description=api.VIEW_QUERY, examples=[api.VIEW_EXAMPLE])):
+    """Capability-scoped tile. Zoom must be 0..22 and x/y must be in 0..2^z-1; otherwise 400."""
     if z < 0 or z > 22 or x < 0 or y < 0 or x >= 2 ** z or y >= 2 ** z:
         raise HTTPException(status_code=400, detail="tile coordinates out of range")
     with dbq.get_pool().connection() as conn:
@@ -310,13 +349,29 @@ def tiles_mvt(layer: str, z: int, x: int, y: int,
                     headers={"Cache-Control": "no-store"})
 
 
-@app.get("/wmsref/{dataset_id}")
+@app.get("/wmsref/{dataset_id}", tags=["proxy"], summary="Authenticated WMS GetMap proxy", response_class=Response,
+         responses={**api.errors({"400": "Missing view.", "403": "Layer excluded from view or request is not GetMap.",
+                                    "404": "Unknown dataset."}),
+                    502: {"description": "Upstream request failed (JSON) or returned non-200 (plain text).",
+                          "content": {"application/json": {"schema": {"type": "object"}},
+                                      "text/plain": {"schema": {"type": "string"}}}},
+                    200: {"description": "Upstream image; content type is passed through.",
+                          "content": {kind: {"schema": api.BINARY} for kind in ("image/png", "image/jpeg")}}},
+         openapi_extra={"parameters": [
+             {"name": "REQUEST", "in": "query", "required": True,
+              "description": "GetMap only; parameter names and value are case-insensitive.",
+              "schema": {"type": "string", "examples": ["GetMap"]}},
+             *[{"name": name, "in": "query", "required": False, "schema": {"type": "string"},
+                "description": "Forwarded to the upstream WMS."}
+               for name in ("LAYERS", "BBOX", "WIDTH", "HEIGHT", "CRS", "FORMAT")]]})
 def wmsref(dataset_id: str, request: Request,
-           view: str | None = Query(default=None)):
+           view: str | None = Query(default=None, description=api.VIEW_QUERY, examples=[api.VIEW_EXAMPLE])):
     """GetMap proxy for authenticated WMS raster_refs. The browser cannot hold the
     Basic-auth credential, so the compilers point map sources here and the viewer
     injects it server-side. Capability-checked like /data and /tiles: the dataset's
-    wms: ref must be part of the named view."""
+    wms: ref must be part of the named view. WMS GetMap parameters (SERVICE, VERSION,
+    LAYERS, STYLES, CRS/SRS, BBOX, WIDTH, HEIGHT, FORMAT, TRANSPARENT, etc.) are forwarded
+    unchanged; only `view` is removed. Non-GetMap requests return 403."""
     if not view:
         raise HTTPException(status_code=400, detail="view query parameter is required")
     with dbq.get_pool().connection() as conn:
