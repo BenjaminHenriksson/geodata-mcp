@@ -16,10 +16,12 @@ RUN rm -f /etc/apt/sources.list.d/apache-arrow.sources \
 
 WORKDIR /app
 
-COPY requirements.txt ./
+COPY services/worker/requirements.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY services/worker/ .
+
+COPY geodata_common /app/geodata_common
 
 EXPOSE 8100
 

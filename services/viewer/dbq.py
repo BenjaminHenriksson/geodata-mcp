@@ -11,6 +11,11 @@ import uuid
 
 from psycopg import sql
 from psycopg_pool import ConnectionPool
+from geodata_common import workspaces
+
+activate_workspace = workspaces.activate
+rename_workspace = workspaces.rename
+delete_workspace = workspaces.delete
 
 IDENT_RE = re.compile(r"^[a-z0-9_]{1,63}$")
 WS_SCHEMA_RE = re.compile(r"^ws_[a-f0-9]{8}$")
@@ -270,7 +275,7 @@ def geojson_feature_collection(conn, schema, table, props, crs, limit, simplify)
 
 # ── workspace manager UI ─────────────────────────────────────────────────────
 
-WORKSPACE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+WORKSPACE_NAME_RE = workspaces.WORKSPACE_NAME_RE
 
 
 def api_key_id_for_hash(conn, key_hash):
@@ -303,14 +308,7 @@ def workspaces_for_key(conn, api_key_id):
         (api_key_id,)).fetchall()
     out = []
     schemas = [r[2] for r in rows]
-    counts = {}
-    if schemas:
-        for s, n in conn.execute(
-            """SELECT n.nspname, count(*) FROM pg_class c
-                 JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE c.relkind = 'r' AND n.nspname = ANY(%s)
-                GROUP BY n.nspname""", (schemas,)).fetchall():
-            counts[s] = int(n)
+    counts = workspaces.layer_counts(conn, schemas)
     for r in rows:
         maps = conn.execute(
             """SELECT view_id, title, to_char(updated_at, 'YYYY-MM-DD HH24:MI')
@@ -326,66 +324,7 @@ def workspaces_for_key(conn, api_key_id):
 
 
 def workspace_owned(conn, api_key_id, workspace_id):
-    """Workspace row (id, name, ws_schema, is_active) iff owned by this key."""
-    try:
-        u = uuid.UUID(str(workspace_id))
-    except (ValueError, AttributeError, TypeError):
-        return None
-    return conn.execute(
-        """SELECT id::text, name, ws_schema, is_active FROM app.workspaces
-            WHERE id = %s AND api_key_id = %s""",
-        (str(u), api_key_id)).fetchone()
-
-
-def _lock_key(conn, api_key_id):
-    """Same per-key advisory lock the MCP server takes (services/mcp/sessions.py), so
-    manager-UI actions serialize against concurrent agent calls on the same key."""
-    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (api_key_id,))
-
-
-def activate_workspace(conn, api_key_id, workspace_id):
-    with conn.transaction():
-        _lock_key(conn, api_key_id)
-        conn.execute(
-            "UPDATE app.workspaces SET is_active = false WHERE api_key_id = %s AND is_active",
-            (api_key_id,))
-        conn.execute(
-            "UPDATE app.workspaces SET is_active = true, last_used = now() WHERE id = %s",
-            (workspace_id,))
-
-
-def rename_workspace(conn, api_key_id, workspace_id, new_name):
-    """Returns an error string or None."""
-    if not WORKSPACE_NAME_RE.match(new_name or ""):
-        return "name must match ^[a-z0-9][a-z0-9_-]{0,39}$"
-    clash = conn.execute(
-        "SELECT 1 FROM app.workspaces WHERE api_key_id = %s AND name = %s AND id <> %s",
-        (api_key_id, new_name, workspace_id)).fetchone()
-    if clash:
-        return f"a workspace named {new_name!r} already exists"
-    conn.execute("UPDATE app.workspaces SET name = %s WHERE id = %s",
-                 (new_name, workspace_id))
-    return None
-
-
-def delete_workspace(conn, api_key_id, workspace_id, ws_schema):
-    """Drop schema + bookkeeping in one transaction; the sql_drop event trigger
-    records the deletion in provenance (attributed via app.workspace_id).
-
-    Deletes the workspace's map views too — same reasoning as the MCP workspace tool:
-    their layers are going away, so the capability URLs would serve empty, permanently
-    un-updatable maps.
-    """
-    if not WS_SCHEMA_RE.match(ws_schema):
-        raise ValueError(f"suspicious schema name {ws_schema!r}")
-    with conn.transaction():
-        _lock_key(conn, api_key_id)
-        conn.execute("SELECT set_config('app.workspace_id', %s, true)", (workspace_id,))
-        conn.execute(sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
-            sql.Identifier(ws_schema)))
-        conn.execute("DELETE FROM app.layer_meta WHERE schema_name = %s", (ws_schema,))
-        conn.execute("DELETE FROM app.map_views WHERE workspace_id = %s", (workspace_id,))
-        conn.execute("DELETE FROM app.workspaces WHERE id = %s", (workspace_id,))
+    return workspaces.owned(conn, api_key_id, workspace_id=workspace_id)
 
 
 def mvt_tile(conn, schema, table, props, z, x, y):

@@ -6,7 +6,7 @@ import logging
 import httpx
 
 import dbutil
-import netauth
+from geodata_common import netauth
 from connectors import files
 from connectors.wfs import _get_source, _upsert_dataset, _valid_bbox
 

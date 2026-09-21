@@ -67,7 +67,9 @@ services:
 
   mcp:
     restart: unless-stopped
-    build: ./services/mcp
+    build:
+      context: .
+      dockerfile: services/mcp/Dockerfile
     environment:
       <<: *appenv
       # Bearer keys for /mcp (comma-separated raw keys; hashed at startup).
@@ -85,7 +87,9 @@ services:
 
   worker:
     restart: unless-stopped
-    build: ./services/worker
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
     environment:
       <<: *appenv
       # Basic-auth for authenticated sources (data_sources.xlsx): one var for
@@ -111,7 +115,9 @@ services:
 
   viewer:
     restart: unless-stopped
-    build: ./services/viewer
+    build:
+      context: .
+      dockerfile: services/viewer/Dockerfile
     environment:
       <<: *appenv
       # Signs the workspace-manager login cookie (any long random string).

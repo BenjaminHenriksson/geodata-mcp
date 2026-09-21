@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 import compile_maplibre
 import compile_origo
 import dbq
-import netauth
+from geodata_common import netauth
 import obs
 import page
 import viewer_auth

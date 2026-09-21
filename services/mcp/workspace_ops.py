@@ -5,32 +5,16 @@ workspaces are invisible here (reads of their *tables* remain possible through t
 shared agent_ro role — the documented namespacing-not-tenancy boundary).
 """
 
-from psycopg import sql as pgsql
 from psycopg.rows import dict_row
 
 import db
 import sessions
+from geodata_common import workspaces
+from geodata_common.workspaces import layer_counts as _layer_counts
 
 
 def _owned(conn, api_key_id: str, name: str):
-    return conn.execute(
-        """SELECT id::text, name, ws_schema, is_active FROM app.workspaces
-            WHERE api_key_id = %s AND name = %s""",
-        (api_key_id, name),
-    ).fetchone()
-
-
-def _layer_counts(conn, schemas: list[str]) -> dict[str, int]:
-    if not schemas:
-        return {}
-    rows = conn.execute(
-        """SELECT n.nspname, count(*) FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE c.relkind = 'r' AND n.nspname = ANY(%s)
-            GROUP BY n.nspname""",
-        (schemas,),
-    ).fetchall()
-    return {r[0]: int(r[1]) for r in rows}
+    return workspaces.owned(conn, api_key_id, name=name)
 
 
 def list_workspaces(api_key_id: str) -> dict:
@@ -89,10 +73,9 @@ def rename(api_key_id: str, name: str, new_name: str) -> dict:
             row = _owned(conn, api_key_id, name)
             if row is None:
                 return {"error": f"no workspace named {name!r}"}
-            if _owned(conn, api_key_id, new_name) is not None:
-                return {"error": f"a workspace named {new_name!r} already exists"}
-            conn.execute("UPDATE app.workspaces SET name = %s WHERE id = %s",
-                         (new_name, row[0]))
+            error = workspaces.rename(conn, api_key_id, row[0], new_name, allow_same=False)
+            if error:
+                return {"error": error}
     return {"workspace": new_name, "renamed_from": name, "ws_schema": row[2],
             "note": "only the label changed; the schema and its tables are untouched"}
 
@@ -113,15 +96,8 @@ def delete(api_key_id: str, name: str) -> dict:
             if row is None:
                 return {"error": f"no workspace named {name!r}"}
             ws_id, _, ws_schema, was_active = row[0], row[1], row[2], row[3]
-            conn.execute("SELECT set_config('app.workspace_id', %s, true)", (ws_id,))
-            conn.execute(pgsql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(
-                pgsql.Identifier(ws_schema)))
-            conn.execute("DELETE FROM app.layer_meta WHERE schema_name = %s", (ws_schema,))
-            views = conn.execute(
-                "DELETE FROM app.map_views WHERE workspace_id = %s RETURNING view_id",
-                (ws_id,)).fetchall()
-            conn.execute("DELETE FROM app.workspaces WHERE id = %s", (ws_id,))
-    out = {"deleted": name, "ws_schema": ws_schema, "map_views_deleted": len(views)}
+            deleted_views = workspaces.delete(conn, api_key_id, ws_id, ws_schema)
+    out = {"deleted": name, "ws_schema": ws_schema, "map_views_deleted": deleted_views}
     if was_active:
         out["note"] = ("that was the active workspace — the next tool call lands in "
                        "'default' (created if needed)")

@@ -14,7 +14,7 @@ from psycopg import sql
 from psycopg.types.json import Json
 
 import dbutil
-import netauth
+from geodata_common import netauth
 
 log = logging.getLogger("worker.files")
 

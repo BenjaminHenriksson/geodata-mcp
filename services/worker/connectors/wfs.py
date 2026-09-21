@@ -11,7 +11,7 @@ import httpx
 from psycopg.types.json import Json
 
 import dbutil
-import netauth
+from geodata_common import netauth
 from connectors import files
 
 log = logging.getLogger("worker.wfs")

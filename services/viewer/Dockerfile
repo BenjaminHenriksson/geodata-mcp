@@ -9,7 +9,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
+COPY services/viewer/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Vendor MapLibre GL JS at build time; no CDN references at runtime.
@@ -28,7 +28,9 @@ RUN mkdir -p /app/static/origo \
  && rm -rf /app/static/origo/examples /app/static/origo/data \
            /app/static/origo/index.html /app/static/origo/index.json
 
-COPY *.py /app/
+COPY services/viewer/*.py /app/
+
+COPY geodata_common /app/geodata_common
 
 EXPOSE 8001
 # Multiple workers: style.json does a DB read + embeds the layer's GeoJSON, which

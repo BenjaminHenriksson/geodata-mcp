@@ -61,7 +61,9 @@ keeps volumes; adding `-v` deletes database, object-store and model-cache data.
 ## Kubernetes / OpenShift
 
 The Helm chart is in [`helm/geodata-mcp`](helm/geodata-mcp). Build and publish
-service images from `db/` and `services/{mcp,viewer,worker}` to your registry.
+service images to your registry. Build the database from `db/`; build app images
+from the repository root, e.g. `docker build -f services/viewer/Dockerfile .`,
+so each image includes `geodata_common/`.
 The database image needs `db/init` available at
 `/docker-entrypoint-initdb.d`, either baked in or supplied by a ConfigMap.
 

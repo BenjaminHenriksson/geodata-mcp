@@ -10,7 +10,6 @@ per-connection mcp-session-id header, which lost the workspace on every reconnec
 """
 
 import hashlib
-import re
 import uuid as uuidlib
 from dataclasses import dataclass
 
@@ -19,9 +18,10 @@ from psycopg.errors import UniqueViolation
 
 import db
 import oauth
+from geodata_common.workspaces import (WORKSPACE_NAME_RE as WORKSPACE_NAME_RE,
+                                       lock_key as _lock_key, activate as _activate)
 
 AUTH_HEADER = "authorization"
-WORKSPACE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 DEFAULT_WORKSPACE = "default"
 MAX_WORKSPACES_PER_KEY = 20
 
@@ -166,29 +166,6 @@ def bootstrap_env_keys(raw_keys: list[str]) -> None:
 
 def _new_ws_schema() -> str:
     return "ws_" + uuidlib.uuid4().hex[:8]
-
-
-def _lock_key(conn, api_key_id: str) -> None:
-    """Serialize workspace bookkeeping for one API key.
-
-    Two concurrent activations would otherwise both clear the old flag and both set
-    theirs, tripping workspaces_one_active_idx and surfacing a raw duplicate-key error.
-    An advisory lock (not SELECT … FOR UPDATE) because the rows being contended may not
-    exist yet — the same race creates the 'default' workspace twice.
-    """
-    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (api_key_id,))
-
-
-def _activate(conn, api_key_id: str, workspace_id: str) -> None:
-    """Make one workspace the key's active one. Caller must hold _lock_key."""
-    conn.execute(
-        "UPDATE app.workspaces SET is_active = false WHERE api_key_id = %s AND is_active",
-        (api_key_id,),
-    )
-    conn.execute(
-        "UPDATE app.workspaces SET is_active = true, last_used = now() WHERE id = %s",
-        (workspace_id,),
-    )
 
 
 def get_or_create_workspace(api_key_id: str, name: str, activate: bool = False) -> Workspace:

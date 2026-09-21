@@ -54,7 +54,7 @@ jobs:
       - name: Create test environment
         run: |
           uv venv --python 3.12
-          uv pip install -r services/mcp/requirements.txt -r services/viewer/requirements.txt pytest
+          uv pip install -e . -r services/mcp/requirements.txt -r services/viewer/requirements.txt pytest
       - name: Verify renderer, job and connector behavior
         run: .venv/bin/python -m pytest -q tests
 

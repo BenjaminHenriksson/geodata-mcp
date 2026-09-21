@@ -11,7 +11,7 @@ import html
 import os
 
 import dbq
-import netauth
+from geodata_common import netauth
 from compile_common import (CODE_VERSION, DEFAULT_CIRCLE_RADIUS,
                               DEFAULT_FILL_OPACITY, DEFAULT_LINE_WIDTH,
                               DEFAULT_PALETTE, DEFAULT_POLYGON_OUTLINE_WIDTH,

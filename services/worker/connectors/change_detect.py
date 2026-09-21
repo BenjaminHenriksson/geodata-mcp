@@ -23,7 +23,7 @@ from PIL import Image
 from psycopg import sql
 
 import dbutil
-import netauth
+from geodata_common import netauth
 
 log = logging.getLogger("worker.change_detect")
 

@@ -27,6 +27,8 @@ OUT_PATH = os.path.join(VIEWER_DIR, "openapi.json")
 
 def load_app():
     """Import services/viewer/main.py and return its FastAPI ``app``."""
+    if REPO_ROOT not in sys.path:
+        sys.path.insert(0, REPO_ROOT)
     if VIEWER_DIR not in sys.path:
         sys.path.insert(0, VIEWER_DIR)
     import importlib

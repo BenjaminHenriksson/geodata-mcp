@@ -20,7 +20,7 @@ cp .env.example .env
 # Replace the placeholder credentials and configure public URLs.
 docker compose up -d --build
 uv venv
-uv pip install -r services/mcp/requirements.txt
+uv pip install -e . -r services/mcp/requirements.txt
 .venv/bin/python scripts/bootstrap_sundsvall.py
 ```
 
@@ -93,7 +93,7 @@ Run the local regression suite without services or credentials:
 
 ```sh
 uv venv
-uv pip install -r services/mcp/requirements.txt -r services/viewer/requirements.txt pytest
+uv pip install -e . -r services/mcp/requirements.txt -r services/viewer/requirements.txt pytest
 .venv/bin/python -m pytest -q tests
 ```
 
@@ -117,6 +117,7 @@ access. `scripts/loadtest.js` provides the k6 load test.
 - [`docs/api.md`](docs/api.md): HTTP and MCP interfaces.
 - [`docs/observability.md`](docs/observability.md): logs and metrics.
 - [`SECURITY.md`](SECURITY.md): authentication and access boundaries.
+- `geodata_common/`: shared workspace rules and upstream credential handling.
 - `services/`: MCP server, viewer, ingestion worker and segmenter.
 - `db/`: database image, initialization SQL and migrations.
 - `scripts/`: bootstrap, live checks, schema and dependency tooling.
