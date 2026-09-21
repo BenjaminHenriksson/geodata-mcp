@@ -1,0 +1,3 @@
+-r ../services/mcp/requirements.txt
+-r ../services/viewer/requirements.txt
+pytest>=8,<10

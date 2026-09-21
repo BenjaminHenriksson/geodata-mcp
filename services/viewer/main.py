@@ -13,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 
 import compile_maplibre
 import compile_origo
+import dashboard_data
+import dashboard_page
 import dbq
 import netauth
 import obs
@@ -168,7 +170,7 @@ def _require_manager_enabled():
 
 @app.get("/")
 def index():
-    return RedirectResponse("/workspaces", status_code=302)
+    return RedirectResponse("/dashboard", status_code=302)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -188,7 +190,7 @@ def login(key: str = Form("")):
             key_id = dbq.api_key_id_for_hash(conn, viewer_auth.hash_key(key))
     if key_id is None:
         return _html(page.login_page("Unknown or disabled API key."), _nonce(), status_code=401)
-    resp = RedirectResponse("/workspaces", status_code=303)
+    resp = RedirectResponse("/dashboard", status_code=303)
     resp.set_cookie(viewer_auth.COOKIE_NAME, viewer_auth.make_cookie(key_id),
                     max_age=viewer_auth.COOKIE_TTL_S, httponly=True, samesite="lax")
     return resp
@@ -241,6 +243,83 @@ def workspaces_action(request: Request, action: str = Form(""),
             return _html(page.workspaces_page(rows, viewer_auth.csrf_token(key_id), error=error),
                          _nonce(), status_code=400)
     return RedirectResponse("/workspaces", status_code=303)
+
+
+# Dashboard pages use the same signed cookie as the workspace manager. Admin status
+# is read from the database on every request, never accepted from the browser.
+def _dashboard_principal(request):
+    _require_manager_enabled()
+    key_id = _manager_key_id(request)
+    if key_id is None:
+        return None
+    with dbq.get_pool().connection() as conn:
+        return dashboard_data.principal(conn, key_id)
+
+
+def _dashboard_response(body):
+    response = _html(body, _nonce())
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(request: Request, page_number: int = Query(1, alias="page", ge=1, le=100000)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    with dbq.get_pool().connection() as conn:
+        data = dashboard_data.overview(conn, principal["id"], page=page_number)
+    return _dashboard_response(dashboard_page.overview_page(
+        data, principal, viewer_auth.csrf_token(principal["id"]), current=page_number))
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_dashboard(request: Request, page_number: int = Query(1, alias="page", ge=1, le=100000)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    if not principal["is_admin"]:
+        raise HTTPException(status_code=403, detail="administrator access required")
+    with dbq.get_pool().connection() as conn:
+        data = dashboard_data.overview(conn, principal["id"], admin=True, page=page_number)
+    return _dashboard_response(dashboard_page.overview_page(
+        data, principal, viewer_auth.csrf_token(principal["id"]), admin=True, current=page_number))
+
+
+@app.get("/admin/audit", response_class=HTMLResponse)
+def admin_audit(request: Request, kind: str = Query("", pattern="^(|mcp|sql)$"),
+                status: str = Query("", pattern="^(|success|error|incomplete)$"),
+                page_number: int = Query(1, alias="page", ge=1, le=100000)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    if not principal["is_admin"]:
+        raise HTTPException(status_code=403, detail="administrator access required")
+    with dbq.get_pool().connection() as conn:
+        data = dashboard_data.audit_events(conn, kind=kind, status=status, page=page_number)
+    return _dashboard_response(dashboard_page.admin_audit_page(
+        data, principal, viewer_auth.csrf_token(principal["id"]),
+        kind=kind, status=status, current=page_number))
+
+
+@app.get("/workspaces/{workspace_id}", response_class=HTMLResponse)
+def workspace_dashboard(workspace_id: str, request: Request,
+                        kind: str = Query("", pattern="^(|mcp|sql)$"),
+                        status: str = Query("", pattern="^(|success|error|incomplete)$"),
+                        page_number: int = Query(1, alias="page", ge=1, le=100000)):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    with dbq.get_pool().connection() as conn:
+        workspace = dashboard_data.workspace(conn, principal["id"], workspace_id,
+                                             admin=principal["is_admin"])
+        if workspace is None:
+            raise HTTPException(status_code=404, detail="unknown workspace")
+        data = dashboard_data.audit_events(conn, workspace_id=workspace["id"],
+                                           kind=kind, status=status, page=page_number)
+    return _dashboard_response(dashboard_page.workspace_page(
+        workspace, data, principal, viewer_auth.csrf_token(principal["id"]),
+        kind=kind, status=status, current=page_number))
 
 
 @app.get("/v/{view_id}/style.json")

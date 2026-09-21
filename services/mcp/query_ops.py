@@ -4,6 +4,7 @@ import time
 
 from psycopg import sql as pgsql
 
+import audit
 import db
 import geometry
 import sqlguard
@@ -13,12 +14,13 @@ MAX_ROWS = 1000
 
 def _log(workspace_id: str, sql_text: str, refs: list[str] | None, row_count: int | None,
          duration_ms: int | None, error: str | None) -> str:
+    api_key_id, call_id = audit.attribution()
     with db.app_pool().connection() as conn:
         row = conn.execute(
             """INSERT INTO app.query_log (workspace_id, sql_text, referenced_tables,
-                                          row_count, duration_ms, error)
-               VALUES (%s, %s, %s, %s, %s, %s) RETURNING query_id""",
-            (workspace_id, sql_text, refs, row_count, duration_ms, error),
+                                          row_count, duration_ms, error, api_key_id, mcp_call_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING query_id""",
+            (workspace_id, sql_text, refs, row_count, duration_ms, error, api_key_id, call_id),
         ).fetchone()
         return str(row[0])
 
@@ -26,7 +28,7 @@ def _log(workspace_id: str, sql_text: str, refs: list[str] | None, row_count: in
 def run_query(workspace_id: str, sql_text: str, limit: int = 500) -> dict:
     cleaned, err = sqlguard.validate_readonly(sql_text)
     if err:
-        qid = _log(workspace_id, str(sql_text or ""), None, None, None, err)
+        qid = _log(workspace_id, str(sql_text or ""), None, None, 0, err)
         return {"error": err, "query_id": qid}
 
     try:

@@ -601,6 +601,7 @@ _WORKSPACES_SHELL = """<!DOCTYPE html>
 <body>
 <a class="skip-link" href="#huvudinnehall">Hoppa till innehåll</a>
 <header>
+<p><a href="/dashboard">Min översikt</a></p>
 <h1>Arbetsytor
   <form class="logout" method="post" action="/logout"><input type="hidden" name="csrf" value="__CSRF__"><button type="submit">logga ut</button></form>
 </h1>
@@ -651,7 +652,8 @@ def _ws_item(w, csrf):
     layer_word = "lager" if w["layer_count"] == 1 else "lager"
     return f"""
 <div class="ws{' active' if w['is_active'] else ''}">
-  <h2>{e(w['name'])} {active_badge}</h2>
+  <h2><a href="/workspaces/{wid}">{e(w['name'])}</a> {active_badge}</h2>
+  <a href="/workspaces/{wid}#audit">SQL- och MCP-logg</a>
   <div class="meta">{w['layer_count']} {layer_word} · schema {e(w['ws_schema'])} ·
     skapad {e(w['created_at'])} · senast använd {e(w['last_used'])}</div>
   {maps}

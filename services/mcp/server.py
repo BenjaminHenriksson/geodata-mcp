@@ -16,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import analysis_ops
+import audit
 import config
 import export_ops
 import layer_ops
@@ -97,7 +98,7 @@ class BearerAuthMiddleware:
 
 def _ws(ctx: Context | None) -> sessions.Workspace:
     """The caller's active workspace (raises sessions.AuthError)."""
-    return sessions.resolve(ctx if ctx is not None else mcp.get_context())
+    return audit.current_workspace() or sessions.resolve(ctx if ctx is not None else mcp.get_context())
 
 
 def _auth_error(e: Exception) -> dict:
@@ -110,6 +111,7 @@ async def healthz(request: Request) -> JSONResponse:
 
 
 @mcp.tool()
+@audit.tool(_ws)
 def search(query: str | None = None, id: str | None = None, kind: str | None = None,
            limit: int = 15, ctx: Context = None) -> dict:
     """Search the municipal geodata catalog (Sundsvall) — datasets, sources and documents.
@@ -148,6 +150,7 @@ def search(query: str | None = None, id: str | None = None, kind: str | None = N
 
 
 @mcp.tool()
+@audit.tool(_ws)
 def load(op: str, kind: str | None = None, url: str | None = None, title: str | None = None,
          slug: str | None = None, license: str = "", notes: str = "",
          dataset_id: str | None = None, table_name: str | None = None, target: str = "ref",
@@ -210,6 +213,7 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
 
 
 @mcp.tool()
+@audit.tool(_ws)
 def analyze(op: str, id: str | None = None, params: dict | None = None,
             job_id: int | None = None, timeout_s: float | None = None,
             ctx: Context = None) -> dict:
@@ -257,6 +261,7 @@ def analyze(op: str, id: str | None = None, params: dict | None = None,
 
 
 @mcp.tool()
+@audit.tool(_ws)
 def query(sql: str, limit: int = 500, ctx: Context = None) -> dict:
     """Run read-only SQL (PostGIS 3.5 + pgvector) — the analysis workhorse.
 
@@ -299,6 +304,7 @@ def query(sql: str, limit: int = 500, ctx: Context = None) -> dict:
 
 
 @mcp.tool()
+@audit.tool(_ws)
 def workspace(op: str = "current", name: str | None = None, new_name: str | None = None,
               ctx: Context = None) -> dict:
     """Manage your durable workspaces (named containers for layers and maps).
@@ -352,6 +358,7 @@ def workspace(op: str = "current", name: str | None = None, new_name: str | None
 
 
 @mcp.tool()
+@audit.tool(_ws)
 def layer(op: str, name: str | None = None, sql: str | None = None, notes: str = "",
           style: dict | None = None, key_column: str | None = None, values: dict | None = None,
           popup: list | None = None, label: str | None = None, visible: bool | None = None,
@@ -411,6 +418,7 @@ def layer(op: str, name: str | None = None, sql: str | None = None, notes: str =
 
 
 @mcp.tool()
+@audit.tool(_ws)
 def map(op: str = "upsert", view_id: str | None = None, title: str | None = None,
         layers: list | None = None, basemap: str = "positron",
         extent_3014: list | None = None, legend: bool = True, ctx: Context = None) -> dict:
@@ -453,6 +461,7 @@ def map(op: str = "upsert", view_id: str | None = None, title: str | None = None
 
 
 @mcp.tool()
+@audit.tool(_ws)
 def export(layers: list, format: str = "gpkg", cite: bool = True, ctx: Context = None) -> dict:
     """Export layers to a standard GIS file and get a download URL (valid 24 h).
 
