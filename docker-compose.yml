@@ -97,6 +97,8 @@ services:
       GEODATA_HTTP_CREDENTIALS: ${GEODATA_HTTP_CREDENTIALS:-}
       # SAM3 segmenter runs natively on the host (see services/segmenter/README.md).
       SAM3_URL: ${SAM3_URL:-http://host.docker.internal:8200}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GEMMA_CONCURRENCY: ${GEMMA_CONCURRENCY:-4}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

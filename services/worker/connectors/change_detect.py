@@ -1,4 +1,5 @@
-"""SAM3 orthophoto change detection (change_detect): two vintage sources —
+"""Orthophoto change detection (SAM3 masks or Gemma paired-image boxes):
+two vintage sources —
 STAC collections (item search + windowed /vsicurl reads of the COGs) or WMS
 orthophoto vintage layers (per-window GetMap, e.g. the Lantmäteriet vintages
 cascaded publicly by karta.sundsvall.se) — per-window segmentation via the
@@ -24,6 +25,7 @@ from psycopg import sql
 
 import dbutil
 from geodata_common import netauth
+from connectors import gemma_change
 
 log = logging.getLogger("worker.change_detect")
 
@@ -203,12 +205,12 @@ def _cross_season(months_a: list, months_b: list) -> bool:
 
 # ── window grid ─────────────────────────────────────────────────────────────
 
-def _window_grid(bbox6, proc_gsd: float) -> list:
+def _window_grid(bbox6, proc_gsd: float, tile_px=TILE_PX, overlap_px=OVERLAP_PX) -> list:
     """1008 px windows at proc_gsd over the 3006 bbox, 96 px overlap, row-major
     from the top-left corner (uly is the window's max northing)."""
     x1, y1, x2, y2 = bbox6
-    tile_m = TILE_PX * proc_gsd
-    stride_m = (TILE_PX - OVERLAP_PX) * proc_gsd
+    tile_m = tile_px * proc_gsd
+    stride_m = (tile_px - overlap_px) * proc_gsd
     xs = [x1]
     while xs[-1] + tile_m < x2:
         xs.append(xs[-1] + stride_m)
@@ -219,7 +221,8 @@ def _window_grid(bbox6, proc_gsd: float) -> list:
     for r, uly in enumerate(ys):
         for c, ulx in enumerate(xs):
             windows.append({"tile_id": f"r{r:02d}c{c:02d}", "ulx": ulx, "uly": uly,
-                            "lrx": ulx + tile_m, "lry": uly - tile_m})
+                            "lrx": ulx + tile_m, "lry": uly - tile_m,
+                            "tile_px": tile_px})
     return windows
 
 
@@ -286,7 +289,8 @@ def _window_png(vrt, w: dict, path: str):
     try:
         out = gdal.Translate(path, vrt, format="PNG",
                              projWin=[w["ulx"], w["uly"], w["lrx"], w["lry"]],
-                             width=TILE_PX, height=TILE_PX, resampleAlg="bilinear")
+                             width=w.get("tile_px", TILE_PX),
+                             height=w.get("tile_px", TILE_PX), resampleAlg="bilinear")
     except Exception as exc:
         log.warning("window %s read failed: %s", w["tile_id"], exc)
         _unlink_quiet(path)
@@ -333,7 +337,7 @@ def _window_png_wms(client: httpx.Client, wms_url: str, layer: str, w: dict,
         "service": "WMS", "version": "1.3.0", "request": "GetMap",
         "layers": layer, "styles": "", "crs": "EPSG:3006",
         "bbox": f"{w['lry']},{w['ulx']},{w['uly']},{w['lrx']}",
-        "width": str(TILE_PX), "height": str(TILE_PX),
+        "width": str(w.get("tile_px", TILE_PX)), "height": str(w.get("tile_px", TILE_PX)),
         "format": "image/png", "transparent": "true",
     }
     data = None
@@ -392,7 +396,8 @@ def _mask_polygons(mask_b64: str, w: dict, srs_wkt: str) -> list:
 
 
 def _infer(sam3_url: str, windows: list, items_by_tag: dict, sources_by_tag: dict,
-           concepts: list, threshold: float, statuses: dict, prefix: str):
+           concepts: list, threshold: float, statuses: dict, prefix: str,
+           backend="sam3", gemma_config=None, collections=None):
     """Per-window inference over both vintages (STAC → VRT windowed reads,
     WMS → per-window GetMap). Mutates statuses; returns (detection rows for
     the temp table, model info from the segmenter)."""
@@ -447,28 +452,35 @@ def _infer(sam3_url: str, windows: list, items_by_tag: dict, sources_by_tag: dic
         with httpx.Client(timeout=httpx.Timeout(SEGMENT_TIMEOUT)) as client, \
                 httpx.Client(timeout=httpx.Timeout(HTTP_TIMEOUT),
                              follow_redirects=False) as wms_client:
-            for w in windows:
-                if statuses[w["tile_id"]] is not None:
-                    continue
-                pngs = {}
-                for tag in ("a", "b"):
-                    src = sources_by_tag[tag]
-                    if src["kind"] == "wms":
-                        png = _window_png_wms(wms_client, src["url"],
-                                              items_by_tag[tag][0]["id"], w,
-                                              wms_auth.get(tag))
-                    else:
-                        png = _window_png(vrts[tag], w,
-                                          f"{prefix}_{w['tile_id']}_{tag}.png")
-                    if png is _READ_ERROR:
-                        statuses[w["tile_id"]] = "error"
-                        break
-                    if png is None:
-                        statuses[w["tile_id"]] = "missing_" + tag
-                        break
-                    pngs[tag] = png
-                if len(pngs) < 2:
-                    continue
+            def image_pairs():
+                for w in windows:
+                    if statuses[w["tile_id"]] is not None:
+                        continue
+                    pngs = {}
+                    for tag in ("a", "b"):
+                        src = sources_by_tag[tag]
+                        if src["kind"] == "wms":
+                            png = _window_png_wms(wms_client, src["url"],
+                                                  items_by_tag[tag][0]["id"], w,
+                                                  wms_auth.get(tag))
+                        else:
+                            png = _window_png(vrts[tag], w,
+                                              f"{prefix}_{w['tile_id']}_{tag}.png")
+                        if png is _READ_ERROR:
+                            statuses[w["tile_id"]] = "error"
+                            break
+                        if png is None:
+                            statuses[w["tile_id"]] = "missing_" + tag
+                            break
+                        pngs[tag] = png
+                    if len(pngs) < 2:
+                        continue
+                    yield w, pngs
+
+            if backend == "gemma":
+                return gemma_change.infer(client, image_pairs(), concepts, collections,
+                                          statuses, gemma_config)
+            for w, pngs in image_pairs():
                 # Buffer this window's rows so a failure in vintage b cannot
                 # leave half a window in the diff (spurious 'disappeared').
                 w_rows = []
@@ -511,6 +523,44 @@ def _infer(sam3_url: str, windows: list, items_by_tag: dict, sources_by_tag: dic
 
 # ── PostGIS diff + output tables ────────────────────────────────────────────
 
+def _write_gemma_candidates(cur, tbl, rows, collection_a, collection_b,
+                            meta_a, meta_b, min_area, area_wkt):
+    cur.execute(sql.SQL("""
+        CREATE TABLE {tbl} (
+            fid bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            concept text NOT NULL, change_class text NOT NULL,
+            confidence_a real, confidence_b real, iou real, area_m2 real,
+            vintage_a text, vintage_b text, datetime_a timestamptz, datetime_b timestamptz,
+            backend text NOT NULL DEFAULT 'gemma',
+            geometry_kind text NOT NULL DEFAULT 'bbox',
+            tile_id text NOT NULL, change_type text NOT NULL, confidence_label text NOT NULL,
+            before_description text, after_description text, evidence text,
+            geom geometry(Polygon, 3014)
+        )
+    """).format(tbl=tbl))
+    if rows:
+        cur.executemany(sql.SQL("""
+            WITH candidate AS (
+                SELECT %s::text AS tile_id, %s::text AS concept,
+                       %s::text AS change_class, %s::text AS change_type,
+                       %s::text AS confidence_label, %s::text AS before_description,
+                       %s::text AS after_description, %s::text AS evidence,
+                       ST_Transform(ST_MakeEnvelope(%s, %s, %s, %s, 3006), 3014) AS geom
+            )
+            INSERT INTO {tbl} (tile_id, concept, change_class, change_type, confidence_label,
+                              before_description, after_description, evidence,
+                              geom, area_m2, vintage_a, vintage_b, datetime_a, datetime_b)
+            SELECT tile_id, concept, change_class, change_type, confidence_label,
+                   before_description, after_description, evidence, geom, ST_Area(geom),
+                   %s, %s, %s::timestamptz, %s::timestamptz
+              FROM candidate
+             WHERE ST_Area(geom) >= %s
+               AND ST_Intersects(geom, ST_GeomFromText(%s, 3014))
+        """).format(tbl=tbl),
+            [(*row, collection_a, collection_b, meta_a["datetime_min"], meta_b["datetime_min"],
+              min_area, area_wkt) for row in rows])
+
+
 def _write_outputs(conn, job, schema: str, table: str, cov_table: str,
                    windows: list, statuses: dict, det_rows: list,
                    proc_gsd: float, min_area: float, collection_a: str,
@@ -525,112 +575,116 @@ def _write_outputs(conn, job, schema: str, table: str, cov_table: str,
         # geodata_app's role default is 120 s; the union/IoU statements on a
         # full-cap run need more. LOCAL: reverts at this transaction's commit.
         cur.execute("SET LOCAL statement_timeout = '15min'")
-        cur.execute(
-            "CREATE TEMP TABLE chg_det ("
-            " vintage text NOT NULL, tile_id text NOT NULL, concept text NOT NULL,"
-            " score real NOT NULL, geom geometry(Polygon, 3014) NOT NULL)"
-        )
-        if det_rows:
-            cur.executemany(
-                "INSERT INTO chg_det (vintage, tile_id, concept, score, geom) "
-                "VALUES (%s, %s, %s, %s, "
-                "ST_Transform(ST_SetSRID(ST_GeomFromWKB(%s), 3006), 3014))",
-                det_rows,
+        if details["backend"] == "gemma":
+            _write_gemma_candidates(cur, tbl, det_rows, collection_a, collection_b,
+                                    meta_a, meta_b, min_area, job["payload"]["area_wkt_3014"])
+        else:
+            cur.execute(
+                "CREATE TEMP TABLE chg_det ("
+                " vintage text NOT NULL, tile_id text NOT NULL, concept text NOT NULL,"
+                " score real NOT NULL, geom geometry(Polygon, 3014) NOT NULL)"
             )
-        # Morphological opening (kills slivers/misregistration noise) applied
-        # to the per-vintage+concept union BEFORE the dump: opening a set of
-        # disjoint parts equals opening each part, and dumping afterwards
-        # keeps every object a plain Polygon (a negative buffer can split
-        # one polygon into several). Empty results dump to zero rows.
-        cur.execute(
-            """
-            CREATE TEMP TABLE chg_obj AS
-            WITH merged AS (
-                SELECT vintage, concept,
-                       ST_Buffer(ST_Buffer(ST_Union(geom), %s), %s) AS geom
-                  FROM chg_det
-                 GROUP BY vintage, concept
-            ), parts AS (
-                SELECT vintage, concept, (ST_Dump(geom)).geom AS geom FROM merged
-            )
-            SELECT row_number() OVER () AS oid, p.vintage, p.concept, p.geom,
-                   (SELECT max(d.score) FROM chg_det d
-                     WHERE d.vintage = p.vintage AND d.concept = p.concept
-                       AND ST_Intersects(d.geom, p.geom)) AS score
-              FROM parts p
-             WHERE NOT ST_IsEmpty(p.geom) AND ST_Area(p.geom) > 0
-            """,
-            (-2.0 * proc_gsd, 2.0 * proc_gsd),
-        )
-        cur.execute(sql.SQL(
-            """
-            CREATE TABLE {tbl} (
-                fid bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                concept text NOT NULL,
-                change_class text NOT NULL,
-                confidence_a real,
-                confidence_b real,
-                iou real,
-                area_m2 real,
-                vintage_a text,
-                vintage_b text,
-                datetime_a timestamptz,
-                datetime_b timestamptz,
-                geom geometry(Polygon, 3014)
-            )
-            """).format(tbl=tbl))
-        cur.execute(
-            sql.SQL(
+            if det_rows:
+                cur.executemany(
+                    "INSERT INTO chg_det (vintage, tile_id, concept, score, geom) "
+                    "VALUES (%s, %s, %s, %s, "
+                    "ST_Transform(ST_SetSRID(ST_GeomFromWKB(%s), 3006), 3014))",
+                    det_rows,
+                )
+            # Morphological opening (kills slivers/misregistration noise) applied
+            # to the per-vintage+concept union BEFORE the dump: opening a set of
+            # disjoint parts equals opening each part, and dumping afterwards
+            # keeps every object a plain Polygon (a negative buffer can split
+            # one polygon into several). Empty results dump to zero rows.
+            cur.execute(
                 """
-                WITH a AS (SELECT * FROM chg_obj WHERE vintage = 'a'),
-                     b AS (SELECT * FROM chg_obj WHERE vintage = 'b'),
-                     pairs AS (
-                         SELECT a.oid AS a_oid, b.oid AS b_oid, b.concept,
-                                a.score AS score_a, b.score AS score_b,
-                                b.geom AS geom_b,
-                                ST_Area(ST_Intersection(a.geom, b.geom))
-                                  / NULLIF(ST_Area(ST_Union(a.geom, b.geom)), 0) AS iou
-                           FROM a
-                           JOIN b ON b.concept = a.concept
-                                 AND ST_Intersects(a.geom, b.geom)
-                     ),
-                     best AS (
-                         SELECT * FROM (SELECT p.*, row_number() OVER (
-                                            PARTITION BY p.b_oid
-                                            ORDER BY p.iou DESC) AS rn
-                                          FROM pairs p) ranked
-                          WHERE rn = 1
-                     ),
-                     classified AS (
-                         SELECT b.concept, 'appeared' AS change_class,
-                                NULL::real AS confidence_a, b.score AS confidence_b,
-                                NULL::double precision AS iou, b.geom
-                           FROM b
-                          WHERE NOT EXISTS (SELECT 1 FROM pairs p WHERE p.b_oid = b.oid)
-                         UNION ALL
-                         SELECT a.concept, 'disappeared', a.score, NULL::real,
-                                NULL::double precision, a.geom
-                           FROM a
-                          -- best, not pairs: a boundary-graze pair must not
-                          -- suppress a demolition claimed by no b-object
-                          WHERE NOT EXISTS (SELECT 1 FROM best WHERE best.a_oid = a.oid)
-                         UNION ALL
-                         SELECT best.concept, 'changed', best.score_a, best.score_b,
-                                best.iou, best.geom_b
-                           FROM best
-                          WHERE best.iou < %s
-                     )
-                INSERT INTO {tbl} (concept, change_class, confidence_a, confidence_b,
-                                   iou, area_m2, vintage_a, vintage_b,
-                                   datetime_a, datetime_b, geom)
-                SELECT concept, change_class, confidence_a, confidence_b, iou,
-                       ST_Area(geom), %s, %s, %s::timestamptz, %s::timestamptz, geom
-                  FROM classified
-                 WHERE ST_Area(geom) >= %s
-                """).format(tbl=tbl),
-            (IOU_UNCHANGED, collection_a, collection_b,
-             meta_a["datetime_min"], meta_b["datetime_min"], min_area),
-        )
+                CREATE TEMP TABLE chg_obj AS
+                WITH merged AS (
+                    SELECT vintage, concept,
+                           ST_Buffer(ST_Buffer(ST_Union(geom), %s), %s) AS geom
+                      FROM chg_det
+                     GROUP BY vintage, concept
+                ), parts AS (
+                    SELECT vintage, concept, (ST_Dump(geom)).geom AS geom FROM merged
+                )
+                SELECT row_number() OVER () AS oid, p.vintage, p.concept, p.geom,
+                       (SELECT max(d.score) FROM chg_det d
+                         WHERE d.vintage = p.vintage AND d.concept = p.concept
+                           AND ST_Intersects(d.geom, p.geom)) AS score
+                  FROM parts p
+                 WHERE NOT ST_IsEmpty(p.geom) AND ST_Area(p.geom) > 0
+                """,
+                (-2.0 * proc_gsd, 2.0 * proc_gsd),
+            )
+            cur.execute(sql.SQL(
+                """
+                CREATE TABLE {tbl} (
+                    fid bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                    concept text NOT NULL,
+                    change_class text NOT NULL,
+                    confidence_a real,
+                    confidence_b real,
+                    iou real,
+                    area_m2 real,
+                    vintage_a text,
+                    vintage_b text,
+                    datetime_a timestamptz,
+                    datetime_b timestamptz,
+                    geom geometry(Polygon, 3014)
+                )
+                """).format(tbl=tbl))
+            cur.execute(
+                sql.SQL(
+                    """
+                    WITH a AS (SELECT * FROM chg_obj WHERE vintage = 'a'),
+                         b AS (SELECT * FROM chg_obj WHERE vintage = 'b'),
+                         pairs AS (
+                             SELECT a.oid AS a_oid, b.oid AS b_oid, b.concept,
+                                    a.score AS score_a, b.score AS score_b,
+                                    b.geom AS geom_b,
+                                    ST_Area(ST_Intersection(a.geom, b.geom))
+                                      / NULLIF(ST_Area(ST_Union(a.geom, b.geom)), 0) AS iou
+                               FROM a
+                               JOIN b ON b.concept = a.concept
+                                     AND ST_Intersects(a.geom, b.geom)
+                         ),
+                         best AS (
+                             SELECT * FROM (SELECT p.*, row_number() OVER (
+                                                PARTITION BY p.b_oid
+                                                ORDER BY p.iou DESC) AS rn
+                                              FROM pairs p) ranked
+                              WHERE rn = 1
+                         ),
+                         classified AS (
+                             SELECT b.concept, 'appeared' AS change_class,
+                                    NULL::real AS confidence_a, b.score AS confidence_b,
+                                    NULL::double precision AS iou, b.geom
+                               FROM b
+                              WHERE NOT EXISTS (SELECT 1 FROM pairs p WHERE p.b_oid = b.oid)
+                             UNION ALL
+                             SELECT a.concept, 'disappeared', a.score, NULL::real,
+                                    NULL::double precision, a.geom
+                               FROM a
+                              -- best, not pairs: a boundary-graze pair must not
+                              -- suppress a demolition claimed by no b-object
+                              WHERE NOT EXISTS (SELECT 1 FROM best WHERE best.a_oid = a.oid)
+                             UNION ALL
+                             SELECT best.concept, 'changed', best.score_a, best.score_b,
+                                    best.iou, best.geom_b
+                               FROM best
+                              WHERE best.iou < %s
+                         )
+                    INSERT INTO {tbl} (concept, change_class, confidence_a, confidence_b,
+                                       iou, area_m2, vintage_a, vintage_b,
+                                       datetime_a, datetime_b, geom)
+                    SELECT concept, change_class, confidence_a, confidence_b, iou,
+                           ST_Area(geom), %s, %s, %s::timestamptz, %s::timestamptz, geom
+                      FROM classified
+                     WHERE ST_Area(geom) >= %s
+                    """).format(tbl=tbl),
+                (IOU_UNCHANGED, collection_a, collection_b,
+                 meta_a["datetime_min"], meta_b["datetime_min"], min_area),
+            )
         cur.execute(sql.SQL(
             """
             CREATE TABLE {cov} (
@@ -678,8 +732,7 @@ def _write_outputs(conn, job, schema: str, table: str, cov_table: str,
 # ── job handler ─────────────────────────────────────────────────────────────
 
 def change_detect(conn, job) -> dict:
-    """Job handler: SAM3 concept segmentation over two orthophoto vintages,
-    mask diff in PostGIS → change-candidate table + _coverage table."""
+    """Two orthophoto vintages → change-candidate table + _coverage table."""
     payload = job["payload"]
     schema = dbutil.check_schema_name(payload["target_schema"])
     table = dbutil.check_table_name(payload["table_name"])
@@ -688,13 +741,21 @@ def change_detect(conn, job) -> dict:
     collection_a = payload["collection_a"]
     collection_b = payload["collection_b"]
     threshold = float(payload.get("threshold") or 0.5)
-    method = payload.get("method") or "mask_compare"
-    if method != "mask_compare":
-        raise RuntimeError(f"method {method!r} not implemented (mask_compare only)")
+    backend = payload.get("backend", "sam3")
+    if backend not in ("sam3", "gemma"):
+        raise RuntimeError("backend must be 'sam3' or 'gemma'")
+    expected_method = "vision_compare" if backend == "gemma" else "mask_compare"
+    method = payload.get("method") or expected_method
+    if method != expected_method:
+        raise RuntimeError(f"backend={backend!r} requires method={expected_method!r}")
     area_wkt = payload["area_wkt_3014"]
 
     sam3_url = os.environ.get("SAM3_URL", "http://host.docker.internal:8200").rstrip("/")
-    _check_segmenter(sam3_url)
+    gemma_config = None
+    if backend == "gemma":
+        gemma_config = gemma_change.settings()
+    else:
+        _check_segmenter(sam3_url)
 
     # Idempotent for the attempt-2 rerun: clear leftover output from a prior
     # attempt of THIS job only. An existing table without our provenance row
@@ -740,7 +801,8 @@ def change_detect(conn, job) -> dict:
     min_area = payload.get("min_area_m2")
     min_area = float(min_area) if min_area else 15.0 * (proc_gsd / 0.16) ** 2
 
-    windows = _window_grid(bbox6, proc_gsd)
+    windows = (_window_grid(bbox6, proc_gsd, gemma_change.TILE_PX, gemma_change.OVERLAP_PX)
+               if backend == "gemma" else _window_grid(bbox6, proc_gsd))
     if len(windows) > MAX_TILES:
         raise RuntimeError(
             f"{len(windows)} tiles exceed the {MAX_TILES}-tile cap at "
@@ -762,7 +824,9 @@ def change_detect(conn, job) -> dict:
     det_rows, model_info = _infer(sam3_url, windows, {"a": items_a, "b": items_b},
                                   {"a": src_a, "b": src_b},
                                   concepts, threshold, statuses,
-                                  f"/vsimem/chg_{job['id']}")
+                                  f"/vsimem/chg_{job['id']}",
+                                  backend=backend, gemma_config=gemma_config,
+                                  collections={"a": collection_a, "b": collection_b})
     for tid, status in statuses.items():
         if status is None:
             statuses[tid] = "error"
@@ -789,13 +853,16 @@ def change_detect(conn, job) -> dict:
     season_note = f"capture months a={meta_a['months']} b={meta_b['months']}"
 
     details = {
+        "backend": backend,
+        "method": method,
+        "geometry_kind": "bbox" if backend == "gemma" else "segmentation",
         "collections": {"a": collection_a, "b": collection_b},
         "source_kinds": {"a": src_a["kind"], "b": src_b["kind"]},
         "wms_gsd": wms_gsd if "wms" in (src_a["kind"], src_b["kind"]) else None,
         "items": {"a": [{"id": i["id"], "datetime": i["datetime"]} for i in items_a],
                   "b": [{"id": i["id"], "datetime": i["datetime"]} for i in items_b]},
         "concepts": concepts,
-        "threshold": threshold,
+        "threshold": threshold if backend == "sam3" else None,
         "min_area_m2": min_area,
         "proc_gsd": proc_gsd,
         "model": model_info,
@@ -814,13 +881,17 @@ def change_detect(conn, job) -> dict:
             "imagery in one vintage or errored — see the coverage table")
     if _cross_season(meta_a["months"], meta_b["months"]):
         warnings.append("cross-season pair — deciduous shadows can masquerade as change")
-    if not det_rows:
+    if backend == "gemma":
+        warnings.append(gemma_change.WARNING)
+    elif not det_rows:
         warnings.append(
             "the model detected NOTHING for any concept in either vintage — an empty "
             "diff, not evidence of no change; the model grounds English text only "
             "(e.g. 'building', not 'byggnad'), so translate concepts and re-run")
 
     result = {
+        "backend": backend,
+        "geometry_kind": "bbox" if backend == "gemma" else "segmentation",
         "table": f"{schema}.{table}",
         "coverage_table": f"{schema}.{cov_table}",
         "tiles_analyzed": tiles_analyzed,

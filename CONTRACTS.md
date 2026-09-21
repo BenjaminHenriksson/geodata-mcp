@@ -245,8 +245,8 @@ Single Python process, two responsibilities:
      `catalog.sources` for the exported layers when `cite`. Result: `{object_key, sidecar_key}`.
      CSV gets `-lco GEOMETRY=AS_WKT`. GeoJSON in 4326 (`-t_srs EPSG:4326`), others native 3014.
    - `change_detect {area_wkt_3014, table_name, target_schema, concepts, collection_a,
-     collection_b, threshold, min_area_m2, method}` — SAM 3 orthophoto change detection
-     (method `mask_compare` only). STAC item search over the area per
+     collection_b, threshold, min_area_m2, method, backend}` — orthophoto change detection.
+     Default `backend='sam3'`, method `mask_compare`: STAC item search over the area per
      collection (public endpoints; items filtered to `spektraltyp in (rgb, rgbi)`), window
      grid in EPSG:3006 at 1008 px / 96 px overlap at the pair's coarsest GSD (≤ 128 tiles),
      per-vintage `gdal.BuildVRT` over `/vsicurl/` COG hrefs (Basic auth via GDAL config,
@@ -264,6 +264,19 @@ Single Python process, two responsibilities:
      Existing output tables are dropped only when this job's own provenance row claims
      them (attempt-2 rerun); otherwise the job refuses. The output transaction runs with
      `SET LOCAL statement_timeout='15min'` (role default 120 s is too small for the diff SQL).
+     Alternative `backend='gemma'`, method `vision_compare`: shared STAC/WMS imagery
+     reader, paired 800 px crops with 400 px overlap, four concurrent OpenRouter calls
+     (`GEMMA_CONCURRENCY`, 1–8), Gemma 4 31B pinned to `deepinfra/turbo`, no fallbacks.
+     `OPENROUTER_API_KEY` is worker-only. Uses `detail='high'` and 16,384 output tokens;
+     the actual vision-token allocation is provider-controlled. No segmenter call.
+     Returned boxes map directly from top-left image coordinates to EPSG:3006 and
+     then EPSG:3014; no mask diff. Output adds `backend`, `geometry_kind='bbox'`,
+     `tile_id`, `change_type`, `confidence_label`, `before_description`,
+     `after_description`, `evidence`; numeric confidences and IoU are NULL.
+     `area_m2` and the min-area filter refer to the box, not a building footprint.
+     Overlap duplicates are retained. Invalid/incomplete responses mark coverage
+     `error`; all failed tiles or provider failures fail the job. Model metadata
+     records cumulative reported usage across calls, never credentials or images.
    - Authenticated sources: `LANTMATERIET_CREDENTIALS=user:password` applies Basic auth to every
      `*.lantmateriet.se` host; `GEODATA_HTTP_CREDENTIALS=host=user:password,...` per-host entries
      override it. Worker-env only (never in the catalog); ogr2ogr gets `GDAL_HTTP_USERPWD`
@@ -352,13 +365,15 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
    - `cancel {job_id}` → queued jobs only: `status='cancelled'` (worker claim takes
      `status='queued'`, so a cancelled job is never picked up — migration 005). Running jobs
      are not interruptible; done/error replies say so.
-   Processor `change_detect` (job kind `change_detect`, worker unchanged): `area`: layer ref
+   Processor `change_detect` (job kind `change_detect`): `area`: layer ref
    (`ref.x`/`ws_….x`, envelope of its extent), bbox string `'xmin,ymin,xmax,ymax'` (3014), or
    WKT 3014; must be a non-empty areal geometry ≤ **2.0 km²**. `concepts`: 1–6 ENGLISH
-   noun phrases (each ≤ 80 chars; Swedish fails silently — verified). Collections are
+   noun phrases (each ≤ 80 chars; required for reliable SAM3 grounding). Collections are
    `catalog.datasets.external_id` values from a `stac` or `wms` source; must exist and
    differ; `gsd` (0.05–2.0, default 0.25) sets WMS processing resolution. Refuses if
    `{table}` or `{table}_coverage` already exists. `ensure_ws_schema` before enqueue.
+   `backend` is `sam3` (default) or `gemma`; omit `method` to choose automatically,
+   or explicitly match `mask_compare` / `vision_compare` to the backend.
    Guidance frames results as screening candidates, never assertions.
 4. `query(sql, limit=500)` — single statement, must start with SELECT/WITH/EXPLAIN/SHOW/VALUES/TABLE
    (case-insensitive). Run `EXPLAIN (FORMAT JSON)` first as agent_ro → collect referenced

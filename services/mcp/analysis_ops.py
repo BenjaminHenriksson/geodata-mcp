@@ -82,8 +82,10 @@ def _run_change_detect(workspace_id: str, area: str | None, concepts: list | Non
                        collection_a: str | None, collection_b: str | None,
                        table_name: str | None, threshold: float | None,
                        min_area_m2: float | None, method: str | None,
-                       gsd: float | None = None) -> dict:
-    """Validate and enqueue a SAM3 orthophoto change-detection job (worker does the rest)."""
+                       gsd: float | None = None, backend: str = "sam3") -> dict:
+    """Validate and enqueue orthophoto change detection (worker does the rest)."""
+    if backend not in ("sam3", "gemma"):
+        return {"error": "backend must be 'sam3' (default) or 'gemma'"}
     if not isinstance(concepts, list) or not 1 <= len(concepts) <= 6:
         return {"error": "concepts must be a list of 1-6 ENGLISH noun phrases, "
                          "e.g. ['building', 'swimming pool', 'storage yard']"}
@@ -120,10 +122,11 @@ def _run_change_detect(workspace_id: str, area: str | None, concepts: list | Non
             return {"error": "min_area_m2 must be a positive number"}
         if min_area <= 0:
             return {"error": "min_area_m2 must be a positive number"}
-    method = method or "mask_compare"
-    if method != "mask_compare":
-        return {"error": f"method {method!r} not implemented — 'mask_compare' is the only "
-                         "method today (raster_diff and dsm_diff are documented future methods)"}
+    expected_method = "vision_compare" if backend == "gemma" else "mask_compare"
+    method = method or expected_method
+    if method != expected_method:
+        return {"error": f"backend={backend!r} requires method={expected_method!r}; "
+                         "omit method to select it automatically"}
     proc_gsd = None
     if gsd is not None:
         try:
@@ -174,11 +177,14 @@ def _run_change_detect(workspace_id: str, area: str | None, concepts: list | Non
                "target_schema": target_schema, "concepts": clean_concepts,
                "collection_a": collection_a, "collection_b": collection_b,
                "threshold": thr, "min_area_m2": min_area, "method": method,
-               "gsd": proc_gsd}
+               "gsd": proc_gsd, "backend": backend}
+    note = ("Gemma compares paired image crops through OpenRouter; results are approximate "
+            "bounding boxes, not segmented footprints — poll with analyze(op='status', job_id=...)"
+            if backend == "gemma" else
+            "SAM3 inference typically runs minutes (the first call also loads "
+            "the model) — poll with analyze(op='status', job_id=...)")
     return job_ops.submit(
-        "change_detect", payload, workspace_id,
-        "SAM3 inference typically runs minutes (the first call also loads "
-        "the model) — poll with analyze(op='status', job_id=...)")
+        "change_detect", payload, workspace_id, note)
 
 
 _CHANGE_DETECT_SCHEMA = {
@@ -186,6 +192,12 @@ _CHANGE_DETECT_SCHEMA = {
     "required": ["area", "concepts", "collection_a", "collection_b", "table_name"],
     "additionalProperties": False,
     "properties": {
+        "backend": {
+            "type": "string", "enum": ["sam3", "gemma"], "default": "sam3",
+            "description": "sam3: local segmentation. gemma: paired image crops sent to "
+                           "Gemma 4 31B via OpenRouter DeepInfra Turbo, returning approximate "
+                           "bounding boxes. Requires worker OPENROUTER_API_KEY; no SAM3 needed.",
+        },
         "area": {
             "type": "string",
             "description": "Analysis area: a layer ref ('ref.<t>' or '<ws schema>.<t>' — "
@@ -220,15 +232,17 @@ _CHANGE_DETECT_SCHEMA = {
         },
         "threshold": {
             "type": "number", "minimum": 0.05, "maximum": 0.95, "default": 0.5,
-            "description": "Segmentation confidence threshold.",
+            "description": "SAM3 segmentation confidence threshold; not used by Gemma.",
         },
         "min_area_m2": {
             "type": "number", "exclusiveMinimum": 0,
-            "description": "Drop candidates smaller than this; default 15·(gsd/0.16)² m².",
+            "description": "Drop candidates smaller than this; default 15·(gsd/0.16)² m². "
+                           "For Gemma this is bounding-box area, not measured building area.",
         },
         "method": {
-            "type": "string", "enum": ["mask_compare"], "default": "mask_compare",
-            "description": "Comparison method (raster_diff / dsm_diff are future work).",
+            "type": "string", "enum": ["mask_compare", "vision_compare"],
+            "description": "Omit to select automatically: mask_compare for SAM3, "
+                           "vision_compare for Gemma. Must match the backend.",
         },
         "gsd": {
             "type": "number", "minimum": 0.05, "maximum": 2.0,
@@ -239,10 +253,22 @@ _CHANGE_DETECT_SCHEMA = {
 }
 
 _CHANGE_DETECT_GUIDE = """\
-Compare two orthophoto vintages with SAM3 concept segmentation and write where
-concepts appeared / disappeared / changed to your workspace. Results are change
+Compare two orthophoto vintages with backend='sam3' (default, concept segmentation)
+or backend='gemma' (Gemma 4 31B on OpenRouter DeepInfra Turbo, paired image crops).
+Write where concepts appeared / disappeared / changed to your workspace. Results are change
 CANDIDATES for review, not conclusions — inspect them against the imagery
 before reporting anything.
+
+Gemma uses separate pairs of 800-pixel crops with 50% overlap, four concurrent
+requests by default, detail='high' and the provider's 16,384-token output allowance.
+It sends imagery to the external provider and needs OPENROUTER_API_KEY on the worker.
+The provider controls the actual visual token count. No SAM3 service is required.
+Omit method (selected from backend); threshold applies only to SAM3.
+Gemma output is APPROXIMATE BOUNDING BOXES, not segmentation or verified footprints:
+geometry_kind='bbox', backend='gemma', tile_id, change_type, confidence_label,
+before_description, after_description and evidence are included. Numerical
+confidence_a/confidence_b/iou stay NULL; area_m2 measures the box, not the building.
+Overlapping tiles can return duplicates. Do not count boxes as unique buildings.
 
 List available vintages via the query tool:
   SELECT d.external_id, s.kind FROM catalog.datasets d
@@ -284,6 +310,7 @@ def _run_change_detect_params(workspace_id: str, params: dict) -> dict:
         min_area_m2=params.get("min_area_m2"),
         method=params.get("method"),
         gsd=params.get("gsd"),
+        backend=params.get("backend", "sam3"),
     )
 
 
@@ -292,7 +319,7 @@ def _run_change_detect_params(workspace_id: str, params: dict) -> dict:
 
 REGISTRY = {
     "change_detect": {
-        "title": "Orthophoto change detection (SAM3)",
+        "title": "Orthophoto change detection (SAM3 or Gemma)",
         "summary": "Where did concepts appear/disappear/change between two imagery "
                    "vintages? Writes candidate + coverage layers.",
         "guide": _CHANGE_DETECT_GUIDE,

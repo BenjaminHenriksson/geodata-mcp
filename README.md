@@ -53,7 +53,7 @@ results contain usable map and download URLs.
 | `query` | Read-only SQL with PostGIS, a 15-second timeout and a result-row cap |
 | `layer` | Create derived tables, update attributes, change styling and manage layers |
 | `map` | Save a map specification and return its viewer URL |
-| `analyze` | Discover, start, inspect and cancel analysis jobs; currently SAM3 change detection |
+| `analyze` | Discover, start, inspect and cancel analysis jobs; SAM3 or Gemma change detection |
 | `export` | Export GPKG, GeoJSON, CSV or Parquet with a provenance sidecar |
 
 A key owns named workspaces and one active workspace. Reconnecting preserves the
@@ -97,6 +97,16 @@ SAM3 runs as a separate service at `SAM3_URL`. See the
 [segmenter setup](services/segmenter/README.md) for MLX and GPU backends.
 Change detection produces candidate and coverage layers: missing coverage is
 not evidence of no change. Inspect the imagery before interpreting candidates.
+
+Select `backend: "gemma"` in `analyze(op="run", id="change_detect", params={...})`
+to compare paired image crops with Gemma 4 31B through OpenRouter DeepInfra Turbo.
+Set `OPENROUTER_API_KEY` on the worker; `GEMMA_CONCURRENCY` defaults to four requests.
+SAM3 remains the default. Omit `method` to select the matching comparison method.
+Gemma uses 800-pixel crops with 50% overlap and `detail: "high"`; the provider
+controls visual token allocation. It returns approximate bounding boxes with
+evidence and qualitative confidence, usable in the existing map/export flow.
+Box area is not building area, and overlapping crops may repeat detections.
+The imagery is sent to the external provider. No SAM3 service is needed for Gemma.
 
 ## Verification
 
