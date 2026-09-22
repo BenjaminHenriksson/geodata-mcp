@@ -130,7 +130,7 @@ def test_analysis_job_response(monkeypatch, status):
         "error": "detail",
         **(
             {
-                "note": "Gemma compares paired image crops through OpenRouter; results are approximate "
+                "note": "Vision compares paired image crops through the model endpoint; results are approximate "
                 "bounding boxes, not segmented footprints — poll with analyze(op='status', job_id=...)"
             }
             if status in ("queued", "running")

@@ -54,7 +54,7 @@ results contain usable map and download URLs.
 | `query` | Read-only SQL with PostGIS, a 15-second timeout and a result-row cap |
 | `layer` | Create derived tables, update attributes, change styling and manage layers |
 | `map` | Save a map specification and return its viewer URL |
-| `analyze` | Inspect PDFs/images with Gemma; run SAM3 or Gemma change detection; track analysis jobs |
+| `analyze` | Inspect PDFs/images with Vision; run SAM3 or Vision change detection; track analysis jobs |
 | `export` | Export GPKG, GeoJSON, CSV or Parquet with a provenance sidecar |
 
 A key owns named workspaces and one active workspace. Reconnecting preserves the
@@ -90,9 +90,9 @@ A zero-row layer can reflect an empty upstream source. Use
 `scripts/validate_data.py` to compare ingestion with source counts and check
 SRIDs, extents and geometry validity.
 
-The worker uses EmbeddingGemma-300M with 256-dimensional embeddings. Search can
+The worker uses the configured embedding model with 256-dimensional embeddings. Search can
 fall back to trigram matching while the model is unavailable. PDF ingestion keeps
-native text and tables and uses Gemma OCR for pages with fewer than 200 extracted
+native text and tables and uses vision-model OCR for pages with fewer than 200 extracted
 characters. OCR text is indexed with page numbers, extraction method and uncertainty
 metadata. An OCR failure fails the job; an empty document is not indexed.
 
@@ -118,7 +118,7 @@ analyze(op="status", job_id=124)
 
 `inspect` accepts direct public PDF/raster-image URLs. Transcription returns full
 page text, extraction method and uncertainty notes: native PDF text/tables where
-available, Gemma OCR for scans/images. It preserves the original language and does
+available, vision-model OCR for scans/images. It preserves the original language and does
 not summarize or answer a question. The assistant can reason over that text itself.
 Answer mode returns per-page answers and visual evidence from the original rendered
 pages, including diagrams on PDFs with native text. Both include page source links
@@ -126,10 +126,10 @@ and persist in workspace job history; retrieving a completed job makes no new mo
 call. OCR can still misread characters; answer mode can inspect ambiguous source
 text or visuals. HTML pages are not rendered or crawled. `load` shares extraction
 and indexes text for search, with chunks and overlap confined to each PDF page.
-Gemma receives high-detail rendered images (200 dpi, at most 3,200 pixels per side),
+The configured vision model receives high-detail rendered images (200 dpi, at most 3,200 pixels per side),
 with up to four concurrent requests and 16,384 output tokens per page. Actual visual
 tokens are provider-controlled. Downloads are limited to 100 MiB; pages are never
-silently skipped. These paths require the worker's `OPENROUTER_API_KEY` for OCR/vision.
+silently skipped. OCR/vision requires worker endpoint configuration, described below.
 
 SAM3 runs as a separate service at `SAM3_URL`. See the
 [segmenter setup](services/segmenter/README.md) for MLX and GPU backends.
@@ -137,14 +137,39 @@ Change detection produces candidate and coverage layers: missing coverage is
 not evidence of no change. Inspect the imagery before interpreting candidates.
 
 `analyze(op="run", id="change_detect", params={...})` compares paired image crops
-with Gemma 4 31B through OpenRouter DeepInfra Turbo by default (`backend: "gemma"`).
-Set `OPENROUTER_API_KEY` on the worker; `GEMMA_CONCURRENCY` defaults to four requests.
+with the configured vision model by default (`backend: "vision"`).
+Set `VISION_BASE_URL` and `VISION_MODEL` on the worker; `VISION_CONCURRENCY` defaults to four requests.
 Select `backend: "sam3"` for SAM3. Omit `method` to select the matching comparison method.
-Gemma uses 800-pixel crops with 50% overlap and `detail: "high"`; the provider
+The vision backend uses 800-pixel crops with 50% overlap and `detail: "high"`; the provider
 controls visual token allocation. It returns approximate bounding boxes with
 evidence and qualitative confidence, usable in the existing map/export flow.
 Box area is not building area, and overlapping crops may repeat detections.
-The imagery is sent to the external provider. No SAM3 service is needed for Gemma.
+The imagery is sent to the configured endpoint, which can be hosted locally or externally.
+No SAM3 service is needed for the vision backend.
+
+### Model endpoint configuration
+
+OCR, document questions and image comparison share an OpenAI-compatible Chat
+Completions endpoint. Set `VISION_BASE_URL` (API base, without `/chat/completions`),
+`VISION_MODEL` and, if authentication is required, `VISION_API_KEY` in private
+worker configuration. No vendor, model or routing policy is built into the code.
+The endpoint must support image inputs and streamed completions that return JSON.
+`VISION_RESPONSE_FORMAT` selects `json_schema` (default), `json_object`, or `none`
+for servers without structured-output support; results are always validated locally.
+`VISION_MAX_OUTPUT_TOKENS` defaults to 16384 and can be raised to the model's limit.
+
+`VISION_EXTRA_BODY` is an optional JSON object for endpoint-specific request fields.
+`VISION_OCR_EXTRA_BODY` adds or replaces fields for transcription only, allowing
+separate reasoning settings. A null value removes a default field, for example
+`{"max_tokens":null,"max_completion_tokens":32768,"stream_options":null}`.
+The model, messages and streaming mode cannot be overridden through extra fields.
+No provider-specific routing or reasoning options are sent unless configured.
+Use worker environment variables in Compose; Helm supports `worker.extraEnv`,
+including Kubernetes `secretKeyRef` entries for credentials.
+
+The local embedding model is configured separately through `EMBED_MODEL`. Choose
+a model with query/document prompts and output compatible with `EMBED_DIM` (256
+by default). Changing it requires re-embedding existing indexed data.
 
 ## Verification
 

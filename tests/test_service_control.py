@@ -170,10 +170,10 @@ def test_interrupted_action_is_never_replayed(setup):
 
 def test_intentionally_disabled_service_cannot_start_or_restart(setup):
     cfg, _, calls = setup
-    cfg["targets"]["sam3"]["disabled_reason"] = "Avstängd för Gemma."
+    cfg["targets"]["sam3"]["disabled_reason"] = "Avstängd för Vision."
     controller = control.Controller(cfg)
     row = controller.inspect("sam3", cfg["targets"]["sam3"])
-    assert row["disabled_reason"] == "Avstängd för Gemma."
+    assert row["disabled_reason"] == "Avstängd för Vision."
     assert row["actions"] == [] and "api_health" not in row
     request = payload()
     request.update(service="sam3", action="restart")

@@ -6,8 +6,10 @@ import httpx
 import pytest
 
 import analysis_ops
-from connectors import gemma_change as gemma
+from connectors import vision_change as vision
 
+
+pytestmark = pytest.mark.usefixtures("vision_endpoint")
 
 def detection(**kw):
     return {"concept": "building", "change_type": "extension", "confidence_label": "high",
@@ -20,9 +22,9 @@ WINDOW = {"tile_id": "r0c0", "ulx": 619650, "uly": 6922150,
 
 
 @pytest.mark.parametrize("params,backend,method", [
-    ({}, "gemma", "vision_compare"),
+    ({}, "vision", "vision_compare"),
     ({"backend": "sam3"}, "sam3", "mask_compare"),
-    ({"backend": "gemma"}, "gemma", "vision_compare"),
+    ({"backend": "vision"}, "vision", "vision_compare"),
 ])
 def test_backend_enqueued_with_matching_method(monkeypatch, params, backend, method):
     conn = MagicMock()
@@ -45,7 +47,7 @@ def test_backend_enqueued_with_matching_method(monkeypatch, params, backend, met
 
 
 @pytest.mark.parametrize("params", [{"backend": "unknown"}, {"backend": None},
-    {"backend": "gemma", "method": "mask_compare"},
+    {"backend": "vision", "method": "mask_compare"},
     {"backend": "sam3", "method": "vision_compare"}])
 def test_invalid_backend_or_method_rejected_before_db(params):
     result = analysis_ops.run("workspace", "change_detect", {
@@ -55,10 +57,10 @@ def test_invalid_backend_or_method_rejected_before_db(params):
 
 
 def test_box_mapping_preserves_northing_axis_and_change_semantics():
-    row = gemma.candidate_rows(WINDOW, [detection()])[0]
+    row = vision.candidate_rows(WINDOW, [detection()])[0]
     assert row[:5] == ("r0c0", "building", "changed", "extension", "high")
     assert row[-4:] == (619670, 6922030, 619730, 6922110)
-    assert gemma.candidate_rows(WINDOW, [detection(change_type="demolition")])[0][2] == "disappeared"
+    assert vision.candidate_rows(WINDOW, [detection(change_type="demolition")])[0][2] == "disappeared"
 
 
 @pytest.mark.parametrize("change", [
@@ -69,15 +71,17 @@ def test_box_mapping_preserves_northing_axis_and_change_semantics():
 ])
 def test_invalid_model_output_is_not_silently_treated_as_no_change(change):
     with pytest.raises(ValueError, match="invalid change"):
-        gemma.parse_changes(json.dumps({"changes": [change]}), ["building"])
+        vision.parse_changes(json.dumps({"changes": [change]}), ["building"])
 
 
 def test_stream_request_and_response_contract():
     def handle(request):
         body = json.loads(request.content)
         assert request.headers["authorization"] == "Bearer fixture-secret"
-        assert body["provider"] == {"only": ["deepinfra/turbo"], "allow_fallbacks": False}
-        assert body["max_tokens"] == 16384 and body["reasoning"]["enabled"]
+        assert "provider" not in body and "reasoning" not in body
+        assert str(request.url) == "https://vision.example.test/v1/chat/completions"
+        assert body["model"] == "test-vision-model"
+        assert body["max_tokens"] == 16384
         parts = body["messages"][0]["content"]
         images = [p["image_url"] for p in parts if p["type"] == "image_url"]
         assert len(images) == 2 and all(x["detail"] == "high" for x in images)
@@ -91,7 +95,7 @@ def test_stream_request_and_response_contract():
         return httpx.Response(200, text="".join("data: " + json.dumps(e) + "\n\n" for e in events)
                               + "data: [DONE]\n\n")
     with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        changes, usage = gemma.detect(client, "fixture-secret", {"a": b"before", "b": b"after"},
+        changes, usage = vision.detect(client, "fixture-secret", {"a": b"before", "b": b"after"},
                                       ["building"], {"a": "2019", "b": "2023"}, WINDOW)
     assert changes == [detection()]
     assert usage == {"prompt_tokens": 123, "completion_tokens": 456, "cost": .001}
@@ -104,7 +108,7 @@ def test_incomplete_or_invalid_reply_retains_usage_but_not_candidates(finish, co
             "usage": {"prompt_tokens": 10, "completion_tokens": 20}}
     with httpx.Client(transport=httpx.MockTransport(
             lambda _: httpx.Response(200, text="data: " + json.dumps(data) + "\n\n"))) as client:
-        changes, usage = gemma.detect(client, "key", {"a": b"a", "b": b"b"}, ["building"], {}, WINDOW)
+        changes, usage = vision.detect(client, "key", {"a": b"a", "b": b"b"}, ["building"], {}, WINDOW)
     assert changes is None and usage["completion_tokens"] == 20
 
 
@@ -112,7 +116,7 @@ def test_provider_failure_does_not_leak_upstream_body():
     with httpx.Client(transport=httpx.MockTransport(
             lambda _: httpx.Response(401, text="secret request data"))) as client:
         with pytest.raises(RuntimeError, match="HTTP 401") as error:
-            gemma.detect(client, "fixture-secret", {"a": b"a", "b": b"b"}, ["building"], {}, WINDOW)
+            vision.detect(client, "fixture-secret", {"a": b"a", "b": b"b"}, ["building"], {}, WINDOW)
     assert "secret" not in str(error.value)
 
 
@@ -123,23 +127,23 @@ def test_concurrent_pairs_are_bounded_and_coverage_distinguishes_errors(monkeypa
         if n < 4:
             barrier.wait()
         return (None if n == 4 else []), {"prompt_tokens": 20, "completion_tokens": 5, "cost": .001}
-    monkeypatch.setattr(gemma, "detect", detect)
+    monkeypatch.setattr(vision, "detect", detect)
     statuses = {str(n): None for n in range(5)}
     pairs = (({**WINDOW, "tile_id": str(n)}, {"a": b"a", "b": b"b"}) for n in range(5))
-    rows, model = gemma.infer(None, pairs, ["building"], {}, statuses, ("key", 4))
+    rows, model = vision.infer(None, pairs, ["building"], {}, statuses, ("key", 4))
     assert rows == [] and list(statuses.values()) == ["analyzed"] * 4 + ["error"]
     assert model["requests"] == 5 and model["usage_cumulative"]["prompt_tokens"] == 100
 
 
 def test_all_invalid_responses_fail_the_job(monkeypatch):
-    monkeypatch.setattr(gemma, "detect", lambda *args: (None, {}))
+    monkeypatch.setattr(vision, "detect", lambda *args: (None, {}))
     statuses = {"r0c0": None}
     with pytest.raises(RuntimeError, match="No image pair"):
-        gemma.infer(None, [(WINDOW, {})], ["building"], {}, statuses, ("key", 1))
+        vision.infer(None, [(WINDOW, {})], ["building"], {}, statuses, ("key", 1))
     assert statuses == {"r0c0": "error"}
 
 
-def test_missing_key_does_not_contact_any_provider(monkeypatch):
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
-        gemma.settings()
+def test_missing_endpoint_does_not_contact_any_provider(monkeypatch):
+    monkeypatch.delenv("VISION_BASE_URL", raising=False)
+    with pytest.raises(RuntimeError, match="VISION_BASE_URL"):
+        vision.settings()

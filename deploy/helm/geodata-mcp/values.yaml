@@ -88,7 +88,7 @@ config:
   # through Caddy). See ingress.minio below.
   s3PublicEndpoint: "https://s3.geodata.sundsvall.example.se"
   s3Bucket: exports
-  embedModel: "unsloth/embeddinggemma-300m"
+  embedModel: ""  # Set a local path or identifier for the embedding model.
   embedDim: "256"
   # Where the worker reaches the SAM3 segmenter. In-cluster there is no
   # host.docker.internal; point at an external/GPU segmenter endpoint, or leave
@@ -206,6 +206,8 @@ mcp:
       memory: 512Mi
 
 worker:
+  # Worker-only model endpoint settings; supports valueFrom.secretKeyRef.
+  extraEnv: []
   image:
     repository: geodata-mcp/worker
     tag: ""            # "" → chart appVersion
@@ -214,7 +216,7 @@ worker:
   replicaCount: 1
   service:
     port: 8100
-  # HuggingFace cache for the embedding model (EmbeddingGemma-300M).
+  # Persistent cache for the configured embedding model.
   # emptyDir → weights re-download on restart; enable persistence for a PVC
   # (RWO — keep replicaCount at 1 when persisting).
   hfCache:

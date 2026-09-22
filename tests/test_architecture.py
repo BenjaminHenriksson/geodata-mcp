@@ -70,9 +70,9 @@ def test_architecture_requires_login_and_preserves_csp(monkeypatch, principal):
 
 
 @pytest.mark.parametrize("query,lang,heading,flow", [
-    ("", "sv", "Så blir en fråga till en karta.", "Förändringsanalys · Gemma"),
-    ("?lang=sv", "sv", "Så blir en fråga till en karta.", "Förändringsanalys · Gemma"),
-    ("?lang=en", "en", "How a question becomes a map.", "Detect changes · Gemma"),
+    ("", "sv", "Så blir en fråga till en karta.", "Förändringsanalys · Bildmodell"),
+    ("?lang=sv", "sv", "Så blir en fråga till en karta.", "Förändringsanalys · Bildmodell"),
+    ("?lang=en", "en", "How a question becomes a map.", "Detect changes · Vision model"),
 ])
 def test_language_choice(monkeypatch, query, lang, heading, flow):
     monkeypatch.setattr(viewer, "_dashboard_principal", lambda request: {"id": "fixture", "name": "Reader", "is_admin": False})
@@ -82,7 +82,7 @@ def test_language_choice(monkeypatch, query, lang, heading, flow):
     page = Page(response.text)
     assert page.language == lang
     assert f"<h1>{heading}</h1>" in response.text
-    assert page.flow_data["gemma"]["title"] == flow
+    assert page.flow_data["vision"]["title"] == flow
     assert page.language_links[lang]["aria-current"] == "page"
     for language, link in page.language_links.items():
         assert link["href"] == "/architecture?lang=" + language

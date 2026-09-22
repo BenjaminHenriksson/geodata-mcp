@@ -13,7 +13,7 @@ import httpx
 import pdfplumber
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from connectors import gemma_api
+from connectors import vision_api
 
 MIN_TEXT_CHARS = 200
 MAX_EDGE = 3200
@@ -83,7 +83,7 @@ def _open_units(path, pages, inspect):
                         dpi = min(200, MAX_EDGE * 72 / max(page.width, page.height))
                         png = _png(page.to_image(resolution=dpi, antialias=True).original)
                     yield {"page": number, "text": text,
-                           "text_method": "gemma_ocr" if needs_ocr else "native"}, png
+                           "text_method": "vision_ocr" if needs_ocr else "native"}, png
                     page.close()
 
             yield "pdf", len(document.pages), selected, units()
@@ -98,7 +98,7 @@ def _open_units(path, pages, inspect):
                     def units():
                         for number in selected:
                             image.seek(number - 1)
-                            yield {"page": number, "text": "", "text_method": "gemma_ocr"}, _png(image.copy())
+                            yield {"page": number, "text": "", "text_method": "vision_ocr"}, _png(image.copy())
 
                     yield "image", total, selected, units()
         except (UnidentifiedImageError, Image.DecompressionBombError, Image.DecompressionBombWarning):
@@ -106,7 +106,7 @@ def _open_units(path, pages, inspect):
 
 
 def _read_page(client, key, page, png, question):
-    ocr = page["text_method"] == "gemma_ocr"
+    ocr = page["text_method"] == "vision_ocr"
     if question is None:
         prompt = OCR_PROMPT
     else:
@@ -126,25 +126,20 @@ text relevant to the question in your answer and evidence.
 """
     fields = ("answer",) if question is not None else ("text",)
     lists = ("uncertainties", "evidence") if question is not None else ("uncertainties",)
-    request = gemma_api.vision_request(prompt, png)
-    if question is None:
-        # Transcription needs faithful copying; reasoning can stall on dense scans.
-        request["reasoning"] = {"enabled": False}
-    request["response_format"] = {"type": "json_schema", "json_schema": {
-        "name": "document_page", "strict": True, "schema": {
-            "type": "object", "additionalProperties": False,
-            "required": [*fields, *lists],
-            "properties": {**{k: {"type": "string"} for k in fields},
-                           **{k: {"type": "array", "items": {"type": "string"}} for k in lists}},
-        },
+    schema = {"name": "document_page", "strict": True, "schema": {
+        "type": "object", "additionalProperties": False,
+        "required": [*fields, *lists],
+        "properties": {**{k: {"type": "string"} for k in fields},
+                       **{k: {"type": "array", "items": {"type": "string"}} for k in lists}},
     }}
-    data, usage = gemma_api.stream_json(client, key, request)
+    request = vision_api.vision_request(prompt, png, schema=schema, ocr=question is None)
+    data, usage = vision_api.stream_json(client, key, request)
     if (not isinstance(data, dict) or any(not isinstance(data.get(k), str) for k in fields)
             or any(not isinstance(data.get(k), list) or
                    any(not isinstance(v, str) for v in data[k]) for k in lists)):
-        raise RuntimeError(f"Gemma returned an incomplete or invalid response for page {page['page']}; no successful extraction was recorded")
+        raise RuntimeError(f"Vision returned an incomplete or invalid response for page {page['page']}; no successful extraction was recorded")
     if question is not None and not data["answer"].strip():
-        raise RuntimeError(f"Gemma returned no answer for page {page['page']}")
+        raise RuntimeError(f"Vision returned no answer for page {page['page']}")
     result = {**page, "text": data["text"] if ocr and question is None else page["text"],
               "uncertainties": data["uncertainties"]}
     if question is not None:
@@ -153,12 +148,12 @@ text relevant to the question in your answer and evidence.
 
 
 def extract(path, *, pages=None, question=None):
-    """Native text is free; OCR/inspection uses high-detail Gemma per selected page."""
+    """Native text is free; OCR/inspection uses high-detail Vision per selected page."""
     results, pending = [], {}
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "cost": 0}
     requests, key = 0, None
     with _open_units(path, pages, question is not None) as (kind, total, selected, units):
-        with httpx.Client(timeout=httpx.Timeout(300, connect=30)) as client, ThreadPoolExecutor(max_workers=4) as pool:
+        with httpx.Client(timeout=httpx.Timeout(300, connect=30)) as client, ThreadPoolExecutor(max_workers=vision_api.concurrency()) as pool:
             def collect():
                 completed, _ = wait(pending, return_when=FIRST_COMPLETED)
                 for future in completed:
@@ -175,15 +170,16 @@ def extract(path, *, pages=None, question=None):
                 if png is None:
                     results.append({**page, "uncertainties": []})
                     continue
-                key = key or gemma_api.api_key()
+                if key is None:
+                    key = vision_api.api_key()
                 future = pool.submit(_read_page, client, key, page, png, question)
                 pending[future] = page["page"]
                 requests += 1
-                if len(pending) >= 4:
+                if len(pending) >= vision_api.concurrency():
                     collect()
             while pending:
                 collect()
     return {"format": kind, "total_pages": total, "selected_pages": selected,
             "pages": sorted(results, key=lambda p: p["page"]),
-            "model": {"name": gemma_api.MODEL, "provider": gemma_api.PROVIDER,
+            "model": {**vision_api.model_info(),
                       "requests": requests, "usage_cumulative": usage} if requests else None}

@@ -555,7 +555,7 @@
         },
         {
           "name": "geodata:note",
-          "value": "EmbeddingGemma-300m embedder backend"
+          "value": "the configured embedding model embedder backend"
         }
       ],
       "licenses": [

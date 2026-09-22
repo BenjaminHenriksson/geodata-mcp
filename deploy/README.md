@@ -123,7 +123,7 @@ run multiple workers. Database and MinIO state must persist across restarts.
 
 - Check `/healthz` and service logs when startup fails.
 - A missing `GEODATA_API_KEYS` intentionally prevents MCP startup.
-- Search can fall back to text matching while EmbeddingGemma downloads or loads.
+- Search can fall back to text matching while the embedding model downloads or loads.
 - Check job `status`, `error` and ingestion warnings before interpreting empty layers.
 - Check map layer references, geometry/SRID and backdrop availability for blank maps.
 - Compiler source fingerprints and layer metadata participate in cache invalidation.

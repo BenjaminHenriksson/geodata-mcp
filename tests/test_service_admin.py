@@ -67,8 +67,8 @@ def test_disabled_service_has_no_start_control(client, principal, monkeypatch):
     support.records("UPDATE app.api_keys SET is_admin=true WHERE id=%s", (principal[1],))
     data = {"checked_at": "2026-09-21T12:00:00Z", "history": [], "services": [{
         "id": "sam3", "name": "SAM3 API", "kind": "systemd", "state": "inactive",
-        "disabled_reason": "Avstängd för Gemma.", "actions": ["start", "restart"]}]}
+        "disabled_reason": "Avstängd för Vision.", "actions": ["start", "restart"]}]}
     monkeypatch.setattr(viewer.service_admin, "request", lambda *a: data)
     response = client.get("/admin/services")
-    assert "Avstängd för Gemma." in response.text
+    assert "Avstängd för Vision." in response.text
     assert 'action="/admin/services/action"' not in response.text

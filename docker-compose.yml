@@ -11,7 +11,7 @@ x-appenv: &appenv
   MINIO_ROOT_USER: ${MINIO_ROOT_USER}
   MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
   EMBED_URL: http://worker:8100/embed
-  EMBED_MODEL: ${EMBED_MODEL:-unsloth/embeddinggemma-300m}
+  EMBED_MODEL: ${EMBED_MODEL:-}
   EMBED_DIM: "${EMBED_DIM:-256}"
 
 services:
@@ -97,8 +97,14 @@ services:
       GEODATA_HTTP_CREDENTIALS: ${GEODATA_HTTP_CREDENTIALS:-}
       # SAM3 segmenter runs natively on the host (see services/segmenter/README.md).
       SAM3_URL: ${SAM3_URL:-http://host.docker.internal:8200}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      GEMMA_CONCURRENCY: ${GEMMA_CONCURRENCY:-4}
+      VISION_BASE_URL: ${VISION_BASE_URL:-}
+      VISION_MODEL: ${VISION_MODEL:-}
+      VISION_MAX_OUTPUT_TOKENS: ${VISION_MAX_OUTPUT_TOKENS:-16384}
+      VISION_RESPONSE_FORMAT: ${VISION_RESPONSE_FORMAT:-json_schema}
+      VISION_EXTRA_BODY: ${VISION_EXTRA_BODY:-}
+      VISION_OCR_EXTRA_BODY: ${VISION_OCR_EXTRA_BODY:-}
+      VISION_API_KEY: ${VISION_API_KEY:-}
+      VISION_CONCURRENCY: ${VISION_CONCURRENCY:-4}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

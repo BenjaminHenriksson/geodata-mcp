@@ -23,11 +23,11 @@ PDF/image URL first. No interactive browser or website screenshotting is provide
 mode='transcribe': return the full text of each selected page, in its original
 language, without a summary or question answering. Omit question. Use this when
 you need the source wording, numbers or qualifications to answer the user yourself.
-Native PDF text/tables are extracted directly; scans and raster images use Gemma
-OCR. Each page has text, text_method (native or gemma_ocr), uncertainties and a source URL.
+Native PDF text/tables are extracted directly; scans and raster images use vision-model
+OCR. Each page has text, text_method (native or vision_ocr), uncertainties and a source URL.
 It is a transcription attempt, not a guarantee of character-perfect OCR.
 
-mode='answer' (default): send rendered original pages to Gemma with your question.
+mode='answer' (default): send rendered original pages to the configured vision model with your question.
 Use this for diagrams, maps, photographs or to inspect unclear source text visually.
 Even PDFs with native text are rendered in this mode. Returns per-page answer,
 evidence and uncertainties in the question's language. It does not automatically
@@ -40,8 +40,9 @@ analyze(op='status', job_id=...) to retrieve the same text/findings without anot
 model call. A new run reads the source URL again. Failed or truncated model responses
 fail the job; they are not interpreted as empty/no-evidence pages.
 
-The worker sends rendered images/text to paid Gemma with detail=high, up to four
-requests concurrently and up to 16,384 output tokens per page. Rendering targets
+The worker sends rendered images/text to the configured vision endpoint with
+detail=high, defaulting to four concurrent requests and 16,384 output tokens per
+page. Both concurrency and output allowance are configurable. Rendering targets
 200 dpi (maximum 3,200 pixels per side); the provider controls visual token allocation.
 PDF/image input is capped at 100 MiB. Public HTTP(S) URLs only, no credentials or
 tailnet/private addresses. This is document interpretation, not georeferencing or

@@ -1,4 +1,4 @@
-"""PDF ingestion: download → native text/tables or Gemma OCR per page → chunk →
+"""PDF ingestion: download → native text/tables or Vision OCR per page → chunk →
 doc.documents + doc.chunks → embed chunks with the local model."""
 
 import logging
@@ -66,7 +66,7 @@ def ingest_pdf(conn, job) -> dict:
     if not chunks:
         raise ValueError("No readable text found in this PDF, including OCR; no empty document was indexed")
     meta = {"empty_pages": [n for n, text in pages if not text.strip()],
-            "ocr_pages": [p["page"] for p in extracted["pages"] if p["text_method"] == "gemma_ocr"],
+            "ocr_pages": [p["page"] for p in extracted["pages"] if p["text_method"] == "vision_ocr"],
             "page_uncertainties": [{"page": p["page"], "uncertainties": p["uncertainties"]}
                                    for p in extracted["pages"] if p["uncertainties"]],
             "model": extracted["model"]}

@@ -5,7 +5,7 @@ payloads. Setup and operational guidance live in `README.md` and `deploy/README.
 
 Scope notes for this build:
 - Target municipality: **Sundsvall** (GovTech Pilot 3, `data_sources.xlsx`). CRS **EPSG:3014** (SWEREF 99 17 15).
-- Local models: **EmbeddingGemma-300M** via ungated mirror `unsloth/embeddinggemma-300m`, truncated to **256 dims**, run inside the worker container (CPU); **SAM 3** concept segmentation for orthophoto change detection via `mlx-community/sam3-image`, run natively on the host by `services/segmenter/` (MLX needs Apple Silicon — the HTTP contract in that service is the seam for swapping in `facebook/sam3` on transformers/GPU). LightOnOCR, pgSTAC/TiTiler: **deferred** (documented, not built).
+- Local models: an embedding model selected by `EMBED_MODEL`, truncated to **256 dims**, run inside the worker container (CPU); **SAM 3** concept segmentation for orthophoto change detection via `mlx-community/sam3-image`, run natively on the host by `services/segmenter/` (MLX needs Apple Silicon — the HTTP contract in that service is the seam for swapping in `facebook/sam3` on transformers/GPU). LightOnOCR, pgSTAC/TiTiler: **deferred** (documented, not built).
 - Map snapshot PNG: deferred. **Both renderers are interactive**: MapLibre GL JS at `/v/<id>`, Origo 2.10 (OpenLayers) at `/v/<id>?renderer=origo`, compiled from the same map spec and vendored into the viewer image.
 
 ## Topology (docker compose, one origin via Caddy)
@@ -48,7 +48,7 @@ S3_ENDPOINT=http://minio:9000          # in-cluster
 S3_PUBLIC_ENDPOINT=http://localhost:9000  # signed into presigned URLs
 S3_BUCKET=exports
 EMBED_URL=http://worker:8100/embed
-EMBED_MODEL=unsloth/embeddinggemma-300m
+EMBED_MODEL=<local model path or identifier>
 EMBED_DIM=256
 GEODATA_API_KEYS=<comma-separated raw keys>   # mcp: bearer auth; refuses to start if empty
 VIEWER_SECRET=<random string>                 # viewer: signs the manager-UI login cookie
@@ -231,7 +231,7 @@ Single Python process, two responsibilities:
    - `ingest_ogcapi {dataset_id, target_schema, table_name}` — like ingest_wfs via GDAL's OAPIF
      driver (`OAPIF:<url>`, `OGR_OAPIF_PAGE_SIZE 1000`).
    - `ingest_file {path|url, table_name, target_schema}` — same via ogr2ogr from GDAL-readable file.
-   - `ingest_pdf {dataset_id|url, title}` — download, native PDF text/tables with Gemma OCR
+   - `ingest_pdf {dataset_id|url, title}` — download, native PDF text/tables with vision-model OCR
      for pages with fewer than 200 extracted characters, ~1200-char chunks with 150 overlap
      within each page (chunks never cross PDF pages, so page citations match their text),
      insert doc.documents + doc.chunks, embed chunks (task `document`). Store OCR page numbers,
@@ -268,10 +268,13 @@ Single Python process, two responsibilities:
      Existing output tables are dropped only when this job's own provenance row claims
      them (attempt-2 rerun); otherwise the job refuses. The output transaction runs with
      `SET LOCAL statement_timeout='15min'` (role default 120 s is too small for the diff SQL).
-     Default `backend='gemma'`, method `vision_compare`: shared STAC/WMS imagery
-     reader, paired 800 px crops with 400 px overlap, four concurrent OpenRouter calls
-     (`GEMMA_CONCURRENCY`, 1–8), Gemma 4 31B pinned to `deepinfra/turbo`, no fallbacks.
-     `OPENROUTER_API_KEY` is worker-only. Uses `detail='high'` and 16,384 output tokens;
+     Default `backend='vision'`, method `vision_compare`: shared STAC/WMS imagery
+     reader, paired 800 px crops with 400 px overlap, four concurrent calls by default
+     (`VISION_CONCURRENCY`, 1–8). `VISION_BASE_URL` and `VISION_MODEL` select an
+     OpenAI-compatible endpoint; `VISION_API_KEY` is optional and worker-only.
+     `VISION_EXTRA_BODY` adds optional request fields; `VISION_OCR_EXTRA_BODY`
+     overrides them for transcription. Uses `detail='high'` and a configurable
+     `VISION_MAX_OUTPUT_TOKENS` (default 16,384);
      the actual vision-token allocation is provider-controlled. No segmenter call.
      Returned boxes map directly from top-left image coordinates to EPSG:3006 and
      then EPSG:3014; no mask diff. Output adds `backend`, `geometry_kind='bbox'`,
@@ -374,7 +377,7 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
    `pages` (all pages/frames by default). `transcribe` uses the shared ingestion extractor:
    native PDF text/tables where available, OCR for scans/images, with no question answering.
    Returns `result_type=transcription` and per-page text/text_method/uncertainties/citation URL.
-   `answer` visually inspects every selected page with Gemma, including diagrams on pages
+   `answer` visually inspects every selected page with the configured vision model, including diagrams on pages
    with native text; returns `result_type=inspection` and per-page answer/evidence/
    uncertainties/citation URL. Both return mode, source URL/hash, selected page coverage
    and cumulative model usage. Results are persisted: `status` retrieves the same result
@@ -391,7 +394,7 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
    `catalog.datasets.external_id` values from a `stac` or `wms` source; must exist and
    differ; `gsd` (0.05–2.0, default 0.25) sets WMS processing resolution. Refuses if
    `{table}` or `{table}_coverage` already exists. `ensure_ws_schema` before enqueue.
-   `backend` is `gemma` (default) or `sam3`; omit `method` to choose automatically,
+   `backend` is `vision` (default) or `sam3`; omit `method` to choose automatically,
    or explicitly match `mask_compare` / `vision_compare` to the backend.
    Guidance frames results as screening candidates, never assertions.
 4. `query(sql, limit=500)` — single statement, must start with SELECT/WITH/EXPLAIN/SHOW/VALUES/TABLE

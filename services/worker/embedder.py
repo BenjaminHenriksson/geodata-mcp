@@ -14,7 +14,7 @@ import dbutil
 
 log = logging.getLogger("worker.embedder")
 
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "unsloth/embeddinggemma-300m")
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "")
 EMBED_DIM = int(os.environ.get("EMBED_DIM", "256"))
 
 BATCH_SIZE = 32
@@ -33,6 +33,8 @@ def get_model():
     if _model is None:
         with _lock:
             if _model is None:
+                if not EMBED_MODEL:
+                    raise RuntimeError("EMBED_MODEL must identify the local embedding model")
                 log.info("loading embedding model %s (truncate_dim=%d)...", EMBED_MODEL, EMBED_DIM)
                 from sentence_transformers import SentenceTransformer
 

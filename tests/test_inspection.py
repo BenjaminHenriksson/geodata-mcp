@@ -10,8 +10,10 @@ from reportlab.lib.utils import ImageReader
 
 import analysis_ops
 import inspection_ops
-from connectors import gemma_api, inspect_document, pdf, public_download, visual_documents
+from connectors import vision_api, inspect_document, pdf, public_download, visual_documents
 
+
+pytestmark = pytest.mark.usefixtures("vision_endpoint")
 
 @pytest.fixture
 def mixed_pdf(tmp_path):
@@ -34,7 +36,7 @@ def model_reply(request):
     schema = request["response_format"]["json_schema"]
     assert schema["strict"] and schema["schema"]["additionalProperties"] is False
     assert "uncertainties" in schema["schema"]["required"]
-    assert request["reasoning"]["enabled"] == ("answer" in schema["schema"]["required"])
+    assert "reasoning" not in request and "provider" not in request
     parts = request["messages"][0]["content"]
     assert parts[1]["image_url"]["detail"] == "high"
     assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
@@ -44,22 +46,22 @@ def model_reply(request):
 
 
 def test_scanned_pages_use_ocr_and_native_pages_do_not(monkeypatch, mixed_pdf):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture")
+    monkeypatch.setenv("VISION_API_KEY", "fixture")
     call = Mock(side_effect=lambda client, key, request: model_reply(request))
-    monkeypatch.setattr(gemma_api, "stream_json", call)
+    monkeypatch.setattr(vision_api, "stream_json", call)
     result = visual_documents.extract(mixed_pdf)
     assert result["selected_pages"] == [1, 2]
     assert call.call_count == 1
     assert result["pages"][0]["text_method"] == "native"
     assert "2018" in result["pages"][0]["text"]
-    assert result["pages"][1]["text_method"] == "gemma_ocr"
+    assert result["pages"][1]["text_method"] == "vision_ocr"
     assert "2019" in result["pages"][1]["text"]
 
 
 def test_inspection_sees_native_page_visuals_and_preserves_selection(monkeypatch, mixed_pdf):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture")
+    monkeypatch.setenv("VISION_API_KEY", "fixture")
     call = Mock(side_effect=lambda client, key, request: model_reply(request))
-    monkeypatch.setattr(gemma_api, "stream_json", call)
+    monkeypatch.setattr(vision_api, "stream_json", call)
     result = visual_documents.extract(mixed_pdf, pages=[1], question="Vad visar bilden?")
     assert result["total_pages"] == 2 and result["selected_pages"] == [1]
     assert call.call_count == 1
@@ -70,18 +72,18 @@ def test_inspection_sees_native_page_visuals_and_preserves_selection(monkeypatch
         visual_documents.extract(mixed_pdf, pages=[3], question="Read it")
 
 
-def test_native_pdf_needs_no_key(monkeypatch, mixed_pdf):
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+def test_native_pdf_needs_no_endpoint(monkeypatch, mixed_pdf):
+    monkeypatch.delenv("VISION_BASE_URL", raising=False)
     result = visual_documents.extract(mixed_pdf, pages=[1])
     assert result["model"] is None
-    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
+    with pytest.raises(RuntimeError, match="VISION_BASE_URL"):
         visual_documents.extract(mixed_pdf, pages=[2])
 
 
 @pytest.mark.parametrize("reply", [None, {}, {"text": "made up", "uncertainties": "bad"}])
 def test_invalid_ocr_never_indexes_an_empty_document(monkeypatch, mixed_pdf, reply):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture")
-    monkeypatch.setattr(gemma_api, "stream_json", lambda *args: (reply, {}))
+    monkeypatch.setenv("VISION_API_KEY", "fixture")
+    monkeypatch.setattr(vision_api, "stream_json", lambda *args: (reply, {}))
     monkeypatch.setattr(pdf.files, "download", lambda url, path, *a, **kw: Path(path).write_bytes(mixed_pdf.read_bytes()))
     store = Mock()
     monkeypatch.setattr(pdf, "store_document", store)
@@ -91,8 +93,8 @@ def test_invalid_ocr_never_indexes_an_empty_document(monkeypatch, mixed_pdf, rep
 
 
 def test_ingestion_indexes_ocr_with_page_metadata(monkeypatch, mixed_pdf):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture")
-    monkeypatch.setattr(gemma_api, "stream_json", lambda c, k, r: model_reply(r))
+    monkeypatch.setenv("VISION_API_KEY", "fixture")
+    monkeypatch.setattr(vision_api, "stream_json", lambda c, k, r: model_reply(r))
     monkeypatch.setattr(pdf.files, "download", lambda url, path, *a, **kw: Path(path).write_bytes(mixed_pdf.read_bytes()))
     store = Mock(return_value={"document_id": "fixture", "chunks": 1})
     monkeypatch.setattr(pdf, "store_document", store)
@@ -103,8 +105,8 @@ def test_ingestion_indexes_ocr_with_page_metadata(monkeypatch, mixed_pdf):
 
 
 def test_image_inspection_returns_citations_and_provenance(monkeypatch, tmp_path):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture")
-    monkeypatch.setattr(gemma_api, "stream_json", lambda c, k, r: model_reply(r))
+    monkeypatch.setenv("VISION_API_KEY", "fixture")
+    monkeypatch.setattr(vision_api, "stream_json", lambda c, k, r: model_reply(r))
     def download(url, path):
         Image.new("RGB", (300, 200), "white").save(path, format="PNG")
         return url, path.stat().st_size
@@ -121,9 +123,9 @@ def test_image_inspection_returns_citations_and_provenance(monkeypatch, tmp_path
 
 
 def test_transcription_returns_complete_selected_pages_without_answering(monkeypatch, mixed_pdf):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture")
+    monkeypatch.setenv("VISION_API_KEY", "fixture")
     call = Mock(side_effect=lambda c, k, r: model_reply(r))
-    monkeypatch.setattr(gemma_api, "stream_json", call)
+    monkeypatch.setattr(vision_api, "stream_json", call)
     monkeypatch.setattr(public_download, "download", lambda url, path: (
         url, path.write_bytes(mixed_pdf.read_bytes())))
     monkeypatch.setattr(inspect_document.dbutil, "insert_provenance", Mock())
@@ -137,15 +139,15 @@ def test_transcription_returns_complete_selected_pages_without_answering(monkeyp
     assert first["text"].count("opening date of 2018") == 10
     assert first["text_method"] == "native"
     assert second["text"] == "Byggstart 2019. Invigning 2022."
-    assert second["text_method"] == "gemma_ocr"
+    assert second["text_method"] == "vision_ocr"
     assert "question" not in result
     assert all("answer" not in p and "evidence" not in p for p in result["pages"])
     assert second["source_url"] == "https://example.test/document.pdf#page=2"
 
 
 def test_image_transcription_returns_text_instead_of_visual_summary(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture")
-    monkeypatch.setattr(gemma_api, "stream_json", lambda c, k, r: model_reply(r))
+    monkeypatch.setenv("VISION_API_KEY", "fixture")
+    monkeypatch.setattr(vision_api, "stream_json", lambda c, k, r: model_reply(r))
     def download(url, path):
         Image.new("RGB", (300, 200), "white").save(path, format="PNG")
         return url, path.stat().st_size

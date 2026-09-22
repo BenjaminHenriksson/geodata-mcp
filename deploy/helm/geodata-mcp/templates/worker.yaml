@@ -88,7 +88,7 @@ spec:
                 name: {{ include "geodata-mcp.configMapName" . }}
             - secretRef:
                 name: {{ include "geodata-mcp.secretName" . }}
-          {{- with .Values.extraEnv }}
+          {{- with concat .Values.extraEnv .Values.worker.extraEnv }}
           env:
             {{- toYaml . | nindent 12 }}
           {{- end }}

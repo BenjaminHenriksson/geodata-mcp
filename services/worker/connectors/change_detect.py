@@ -1,4 +1,4 @@
-"""Orthophoto change detection (SAM3 masks or Gemma paired-image boxes):
+"""Orthophoto change detection (SAM3 masks or Vision paired-image boxes):
 two vintage sources —
 STAC collections (item search + windowed /vsicurl reads of the COGs) or WMS
 orthophoto vintage layers (per-window GetMap, e.g. the Lantmäteriet vintages
@@ -25,7 +25,7 @@ from psycopg import sql
 
 import dbutil
 from geodata_common import netauth
-from connectors import gemma_change
+from connectors import vision_change
 
 log = logging.getLogger("worker.change_detect")
 
@@ -397,7 +397,7 @@ def _mask_polygons(mask_b64: str, w: dict, srs_wkt: str) -> list:
 
 def _infer(sam3_url: str, windows: list, items_by_tag: dict, sources_by_tag: dict,
            concepts: list, threshold: float, statuses: dict, prefix: str,
-           *, backend, gemma_config=None, collections=None):
+           *, backend, vision_config=None, collections=None):
     """Per-window inference over both vintages (STAC → VRT windowed reads,
     WMS → per-window GetMap). Mutates statuses; returns (detection rows for
     the temp table, model info from the segmenter)."""
@@ -477,9 +477,9 @@ def _infer(sam3_url: str, windows: list, items_by_tag: dict, sources_by_tag: dic
                         continue
                     yield w, pngs
 
-            if backend == "gemma":
-                return gemma_change.infer(client, image_pairs(), concepts, collections,
-                                          statuses, gemma_config)
+            if backend == "vision":
+                return vision_change.infer(client, image_pairs(), concepts, collections,
+                                          statuses, vision_config)
             for w, pngs in image_pairs():
                 # Buffer this window's rows so a failure in vintage b cannot
                 # leave half a window in the diff (spurious 'disappeared').
@@ -523,7 +523,7 @@ def _infer(sam3_url: str, windows: list, items_by_tag: dict, sources_by_tag: dic
 
 # ── PostGIS diff + output tables ────────────────────────────────────────────
 
-def _write_gemma_candidates(cur, tbl, rows, collection_a, collection_b,
+def _write_vision_candidates(cur, tbl, rows, collection_a, collection_b,
                             meta_a, meta_b, min_area, area_wkt):
     cur.execute(sql.SQL("""
         CREATE TABLE {tbl} (
@@ -531,7 +531,7 @@ def _write_gemma_candidates(cur, tbl, rows, collection_a, collection_b,
             concept text NOT NULL, change_class text NOT NULL,
             confidence_a real, confidence_b real, iou real, area_m2 real,
             vintage_a text, vintage_b text, datetime_a timestamptz, datetime_b timestamptz,
-            backend text NOT NULL DEFAULT 'gemma',
+            backend text NOT NULL DEFAULT 'vision',
             geometry_kind text NOT NULL DEFAULT 'bbox',
             tile_id text NOT NULL, change_type text NOT NULL, confidence_label text NOT NULL,
             before_description text, after_description text, evidence text,
@@ -575,8 +575,8 @@ def _write_outputs(conn, job, schema: str, table: str, cov_table: str,
         # geodata_app's role default is 120 s; the union/IoU statements on a
         # full-cap run need more. LOCAL: reverts at this transaction's commit.
         cur.execute("SET LOCAL statement_timeout = '15min'")
-        if details["backend"] == "gemma":
-            _write_gemma_candidates(cur, tbl, det_rows, collection_a, collection_b,
+        if details["backend"] == "vision":
+            _write_vision_candidates(cur, tbl, det_rows, collection_a, collection_b,
                                     meta_a, meta_b, min_area, job["payload"]["area_wkt_3014"])
         else:
             cur.execute(
@@ -741,19 +741,19 @@ def change_detect(conn, job) -> dict:
     collection_a = payload["collection_a"]
     collection_b = payload["collection_b"]
     threshold = float(payload.get("threshold") or 0.5)
-    backend = payload.get("backend", "gemma")
-    if backend not in ("sam3", "gemma"):
-        raise RuntimeError("backend must be 'sam3' or 'gemma'")
-    expected_method = "vision_compare" if backend == "gemma" else "mask_compare"
+    backend = payload.get("backend", "vision")
+    if backend not in ("sam3", "vision"):
+        raise RuntimeError("backend must be 'sam3' or 'vision'")
+    expected_method = "vision_compare" if backend == "vision" else "mask_compare"
     method = payload.get("method") or expected_method
     if method != expected_method:
         raise RuntimeError(f"backend={backend!r} requires method={expected_method!r}")
     area_wkt = payload["area_wkt_3014"]
 
     sam3_url = os.environ.get("SAM3_URL", "http://host.docker.internal:8200").rstrip("/")
-    gemma_config = None
-    if backend == "gemma":
-        gemma_config = gemma_change.settings()
+    vision_config = None
+    if backend == "vision":
+        vision_config = vision_change.settings()
     else:
         _check_segmenter(sam3_url)
 
@@ -801,8 +801,8 @@ def change_detect(conn, job) -> dict:
     min_area = payload.get("min_area_m2")
     min_area = float(min_area) if min_area else 15.0 * (proc_gsd / 0.16) ** 2
 
-    windows = (_window_grid(bbox6, proc_gsd, gemma_change.TILE_PX, gemma_change.OVERLAP_PX)
-               if backend == "gemma" else _window_grid(bbox6, proc_gsd))
+    windows = (_window_grid(bbox6, proc_gsd, vision_change.TILE_PX, vision_change.OVERLAP_PX)
+               if backend == "vision" else _window_grid(bbox6, proc_gsd))
     if len(windows) > MAX_TILES:
         raise RuntimeError(
             f"{len(windows)} tiles exceed the {MAX_TILES}-tile cap at "
@@ -825,7 +825,7 @@ def change_detect(conn, job) -> dict:
                                   {"a": src_a, "b": src_b},
                                   concepts, threshold, statuses,
                                   f"/vsimem/chg_{job['id']}",
-                                  backend=backend, gemma_config=gemma_config,
+                                  backend=backend, vision_config=vision_config,
                                   collections={"a": collection_a, "b": collection_b})
     for tid, status in statuses.items():
         if status is None:
@@ -855,7 +855,7 @@ def change_detect(conn, job) -> dict:
     details = {
         "backend": backend,
         "method": method,
-        "geometry_kind": "bbox" if backend == "gemma" else "segmentation",
+        "geometry_kind": "bbox" if backend == "vision" else "segmentation",
         "collections": {"a": collection_a, "b": collection_b},
         "source_kinds": {"a": src_a["kind"], "b": src_b["kind"]},
         "wms_gsd": wms_gsd if "wms" in (src_a["kind"], src_b["kind"]) else None,
@@ -881,8 +881,8 @@ def change_detect(conn, job) -> dict:
             "imagery in one vintage or errored — see the coverage table")
     if _cross_season(meta_a["months"], meta_b["months"]):
         warnings.append("cross-season pair — deciduous shadows can masquerade as change")
-    if backend == "gemma":
-        warnings.append(gemma_change.WARNING)
+    if backend == "vision":
+        warnings.append(vision_change.WARNING)
     elif not det_rows:
         warnings.append(
             "the model detected NOTHING for any concept in either vintage — an empty "
@@ -891,7 +891,7 @@ def change_detect(conn, job) -> dict:
 
     result = {
         "backend": backend,
-        "geometry_kind": "bbox" if backend == "gemma" else "segmentation",
+        "geometry_kind": "bbox" if backend == "vision" else "segmentation",
         "table": f"{schema}.{table}",
         "coverage_table": f"{schema}.{cov_table}",
         "tiles_analyzed": tiles_analyzed,

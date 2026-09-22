@@ -267,7 +267,7 @@ def embed(workspace_id: str) -> dict:
     """Enqueue an embed_catalog job (idempotent: only missing/model-mismatched rows)."""
     job_id, _ = job_ops.enqueue("embed_catalog", {}, workspace_id)
     return {"job_id": job_id,
-            "note": "embedding catalog + doc chunks with EmbeddingGemma — first run downloads "
+            "note": "embedding catalog + doc chunks with the embedding model — first run downloads "
                     "the model and can take minutes; poll with op='status'"}
 
 

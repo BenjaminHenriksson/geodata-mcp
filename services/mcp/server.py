@@ -169,7 +169,7 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
       'wms:<dataset id>' (WMTS renders in the MapLibre view), they are not ingestable.
     - op='ingest' {dataset_id, table_name?, target='ref'|'workspace'}: load a catalog dataset
       into PostGIS (vector via WFS/OGC-API/file → a table with geom SRID 3014; pdf/text
-      documents → extracted text chunks in doc.*; scanned PDF pages use Gemma OCR).
+      documents → extracted text chunks in doc.*; scanned PDF pages use Vision OCR).
       For questions about PDF/image contents without indexing, use analyze's inspect processor.
       target='workspace' puts the table in your
       private schema. Waits up to 8 s, then returns the job status either way; poll with
@@ -228,7 +228,7 @@ def analyze(op: Literal["list", "describe", "run", "status", "cancel"],
 
     Use op='run', id='inspect', params={'url': ..., 'mode': 'transcribe'} to fetch
     full page text (native extraction or OCR), without a summary, for you to reason
-    over. Use mode='answer' with question to ask Gemma about the original page images,
+    over. Use mode='answer' with question to ask Vision about the original page images,
     including diagrams or unclear text. Returns per-page text/findings and source
     links. Use it to examine documents/images found
     through internet search. change_detect writes spatial layers — read with query,
@@ -248,7 +248,7 @@ def analyze(op: Literal["list", "describe", "run", "status", "cancel"],
       it finishes or errors on its own.
 
     'inspect': PDF/image URL + mode (transcribe|answer), optional question/pages. 'change_detect': orthophoto
-    change detection using Gemma by default or explicit backend='sam3'. Start with op='list'.
+    change detection using Vision by default or explicit backend='sam3'. Start with op='list'.
     workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:

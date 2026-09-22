@@ -26,5 +26,5 @@ MINIO_ROOT_USER = os.environ.get("MINIO_ROOT_USER", "geodata")
 MINIO_ROOT_PASSWORD = os.environ.get("MINIO_ROOT_PASSWORD", "")
 
 EMBED_URL = os.environ.get("EMBED_URL", "http://worker:8100/embed")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "unsloth/embeddinggemma-300m")
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "")
 EMBED_DIM = int(os.environ.get("EMBED_DIM", "256"))
