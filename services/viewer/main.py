@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 
 import api_docs as api
+import architecture_page
 import compile_maplibre
 import compile_origo
 import dashboard_data
@@ -291,6 +292,17 @@ def _dashboard_response(body):
     response = _html(body, _nonce())
     response.headers["Cache-Control"] = "private, no-store"
     return response
+
+
+@app.get("/architecture", response_class=HTMLResponse, tags=["manager"],
+         summary="Interactive system architecture", dependencies=api.MANAGER_AUTH,
+         responses={**api.MANAGER_DISABLED, **api.REDIRECT_LOGIN})
+def architecture(request: Request):
+    principal = _dashboard_principal(request)
+    if principal is None:
+        return RedirectResponse("/login", status_code=302)
+    return _dashboard_response(architecture_page.render(
+        principal, viewer_auth.csrf_token(principal["id"])))
 
 
 @app.get("/dashboard", response_class=HTMLResponse, tags=["manager"],

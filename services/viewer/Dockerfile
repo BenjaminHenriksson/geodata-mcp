@@ -29,6 +29,7 @@ RUN mkdir -p /app/static/origo \
            /app/static/origo/index.html /app/static/origo/index.json
 
 COPY services/viewer/*.py /app/
+COPY services/viewer/static/ /app/static/
 
 COPY geodata_common /app/geodata_common
 

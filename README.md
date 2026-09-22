@@ -33,6 +33,7 @@ Generate keys with `openssl rand -hex 24`.
 | --- | --- |
 | `http://localhost:8080/mcp` | Streamable HTTP MCP, bearer API key or OAuth token |
 | `http://localhost:8080/workspaces` | Workspace manager, sign in with an API key |
+| `http://localhost:8080/architecture` | Interactive architecture and data-flow guide, after sign-in |
 | `http://localhost:8080/v/<view_id>` | MapLibre map; append `?renderer=origo` for Origo |
 | `http://localhost:8080/docs` | Interactive viewer API reference |
 | `localhost:5433` | PostgreSQL, credentials from `.env` |

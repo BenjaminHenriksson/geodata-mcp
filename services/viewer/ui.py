@@ -133,6 +133,8 @@ def header(principal=None, csrf="", active=""):
     links = [("/dashboard", "Översikt", "dashboard"), ("/workspaces", "Arbetsytor", "workspaces")]
     if principal and principal.get("is_admin"):
         links.extend((("/admin", "Administration", "admin"), ("/admin/services", "Tjänster", "services")))
+    if principal:
+        links.append(("/architecture", "Arkitektur", "architecture"))
     nav = "".join(f'<a href="{path}"' + (' aria-current="page"' if active == key else '') +
                   f'>{label}</a>' for path, label, key in links)
     if principal:

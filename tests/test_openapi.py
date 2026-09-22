@@ -22,9 +22,10 @@ def test_schema_covers_the_public_api_and_auth(client):
                           '/v/{view_id}', '/v/{view_id}/style.json', '/v/{view_id}/origo.json',
                           '/data/{layer}.geojson', '/tiles/{layer}/{z}/{x}/{y}.mvt', '/wmsref/{dataset_id}',
                           '/dashboard', '/admin', '/admin/audit', '/admin/services',
-                          '/admin/services/action', '/workspaces/{workspace_id}'}
+                          '/admin/services/action', '/workspaces/{workspace_id}', '/architecture'}
     assert schema['components']['securitySchemes']['managerCookie']['name'] == 'gdw_auth'
     assert paths['/workspaces']['get']['security'] == [{'managerCookie': []}]
+    assert paths['/architecture']['get']['security'] == [{'managerCookie': []}]
     assert paths['/workspaces/action']['post']['security'] == [{'managerCookie': []}]
     assert not paths['/data/{layer}.geojson']['get'].get('security')
     assert '304' in paths['/v/{view_id}/style.json']['get']['responses']
@@ -39,6 +40,7 @@ def test_schema_covers_the_public_api_and_auth(client):
 @pytest.mark.parametrize('method,url,path,status', [
     ('get', '/', '/', 302), ('post', '/logout', '/logout', 303),
     ('get', '/workspaces', '/workspaces', 302), ('post', '/workspaces/action', '/workspaces/action', 302),
+    ('get', '/architecture', '/architecture', 302),
     ('get', '/data/ref.buildings.geojson', '/data/{layer}.geojson', 400),
     ('get', '/tiles/ref.buildings/23/0/0.mvt', '/tiles/{layer}/{z}/{x}/{y}.mvt', 400),
     ('get', '/wmsref/missing', '/wmsref/{dataset_id}', 400),
