@@ -140,3 +140,29 @@ def test_analysis_job_response(monkeypatch, status):
     assert enqueue.call_args.args[0] == "change_detect"
     assert enqueue.call_args.args[1]["target_schema"] == "ws_12345678"
     assert enqueue.call_args.args[2] == "workspace"
+
+
+@pytest.mark.parametrize("route", ["status", "submit"])
+def test_document_jobs_return_complete_text_and_source_links(monkeypatch, route):
+    import job_ops
+    full_text = "Full source text. " * 200 + "Only the outer row of plots is included."
+    source_url = "https://example.test/" + "long-document-name-" * 30 + ".pdf#page=3"
+    result = {"mode": "transcribe", "pages": [{"page": 3, "text": full_text,
+              "source_url": source_url, "uncertainties": ["handwriting"]}]}
+    job = {"id": 7, "kind": "inspect", "status": "done", "workspace_id": "owned",
+           "result": result, "created_at": datetime.datetime(2026, 1, 1)}
+    monkeypatch.setattr(db, "get_job", lambda _: job)
+    monkeypatch.setattr(job_ops, "enqueue", lambda *a, **kw: (7, job))
+    if route == "status":
+        response = job_ops.status(7, workspace_id="owned")
+        assert response["created_at"] == "2026-01-01 00:00:00"
+    else:
+        response = job_ops.submit("inspect", {}, "owned", "pending")
+    assert response["result"] == result
+
+
+def test_query_cell_formatting_keeps_its_existing_preview_limit():
+    import geometry
+    text = "x" * 800
+    assert geometry.jsonable_row({"nested": {"text": text}}) == {
+        "nested": {"text": "x" * 400 + geometry.ELLIPSIS}}

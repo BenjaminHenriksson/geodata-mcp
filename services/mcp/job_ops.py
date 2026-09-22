@@ -40,7 +40,7 @@ def lookup(job_id, timeout_s=0, *, workspace_id=None, kind=None):
 
 def status(job_id, timeout_s=0, *, workspace_id=None):
     job, error = lookup(job_id, timeout_s, workspace_id=workspace_id)
-    return error if error else geometry.jsonable_row(job)
+    return error if error else geometry.jsonable_row(job, truncate=False)
 
 
 def cancel(job_id, *, workspace_id=None):
@@ -80,4 +80,4 @@ def submit(kind: str, payload: dict, workspace_id: str, pending_note: str) -> di
                 reply[key] = job[key]
     if reply["status"] in ("queued", "running"):
         reply["note"] = pending_note
-    return geometry.jsonable_row(reply)
+    return geometry.jsonable_row(reply, truncate=False)

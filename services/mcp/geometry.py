@@ -25,7 +25,7 @@ def hexwkb_to_wkt(value: str) -> str:
         return truncate_text(str(value))
 
 
-def jsonable(value, is_geometry: bool = False):
+def jsonable(value, is_geometry: bool = False, *, truncate: bool = True):
     """Convert one cell to a JSON-serializable value."""
     if value is None:
         return None
@@ -36,7 +36,7 @@ def jsonable(value, is_geometry: bool = False):
     if isinstance(value, (int, float)):
         return value
     if isinstance(value, str):
-        return truncate_text(value)
+        return truncate_text(value) if truncate else value
     if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
         return str(value)
     if isinstance(value, decimal.Decimal):
@@ -44,16 +44,16 @@ def jsonable(value, is_geometry: bool = False):
     if isinstance(value, uuid.UUID):
         return str(value)
     if isinstance(value, (bytes, memoryview, bytearray)):
-        return truncate_text(bytes(value).hex())
+        return truncate_text(bytes(value).hex()) if truncate else bytes(value).hex()
     if isinstance(value, (list, tuple)):
-        return [jsonable(v) for v in value]
+        return [jsonable(v, truncate=truncate) for v in value]
     if isinstance(value, dict):
-        return {str(k): jsonable(v) for k, v in value.items()}
-    return truncate_text(str(value))
+        return {str(k): jsonable(v, truncate=truncate) for k, v in value.items()}
+    return truncate_text(str(value)) if truncate else str(value)
 
 
-def jsonable_row(row: dict) -> dict:
-    return {k: jsonable(v) for k, v in row.items()}
+def jsonable_row(row: dict, *, truncate: bool = True) -> dict:
+    return {k: jsonable(v, truncate=truncate) for k, v in row.items()}
 
 
 def infer_pg_type(values: list) -> str:

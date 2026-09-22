@@ -377,6 +377,8 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
    `pages` (all pages/frames by default). `transcribe` uses the shared ingestion extractor:
    native PDF text/tables where available, OCR for scans/images, with no question answering.
    Returns `result_type=transcription` and per-page text/text_method/uncertainties/citation URL.
+   Job submissions/status return complete text, evidence and source URLs, without
+   applying the SQL/search preview truncation limit.
    `answer` visually inspects every selected page with the configured vision model, including diagrams on pages
    with native text; returns `result_type=inspection` and per-page answer/evidence/
    uncertainties/citation URL. Both return mode, source URL/hash, selected page coverage
