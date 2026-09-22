@@ -164,6 +164,5 @@ def map_header(view_id, renderer, title, principal=None, csrf=""):
         f'<a href="/v/{e(view_id)}{suffix}"' +
         (' aria-current="page"' if renderer == key else '') + f'>{label}</a>'
         for suffix, key, label in (("", "maplibre", "MapLibre"), ("?renderer=origo", "origo", "Origo")))
-    return (header(principal, csrf) +
-            f'<div class="map-toolbar"><h1 id="titlebar">{e(title or "Karta")}</h1>'
+    return (f'<div class="map-toolbar"><h1 id="titlebar">{e(title or "Karta")}</h1>'
             f'<nav class="renderer-nav" aria-label="Kartvisare">{links}</nav></div>')

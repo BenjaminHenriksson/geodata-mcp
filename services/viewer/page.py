@@ -19,7 +19,7 @@ __HEADER__
 <div class="map-stage">
 <a class="skip-link" href="#map">Hoppa till innehåll</a>
 <div id="map" role="main" aria-label="Interaktiv kartvy" tabindex="-1"></div>
-<div id="inspector" role="region" aria-label="Bildlager och förändringar"></div>
+<div id="inspector" role="region" aria-label="Bildlager och förändringar" tabindex="-1"></div>
 <div id="legend" role="region" aria-label="Teckenförklaring"></div>
 <div id="error" role="alert"><span id="error-message"></span><button id="retry" type="button">Ladda om</button></div>
 </div>

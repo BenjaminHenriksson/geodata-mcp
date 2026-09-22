@@ -1,35 +1,48 @@
-import {activeSites, routeFeatures} from './policy.js';
+import {activeSites, routeFeatures, stockholmView, SUNDSVALL_OVERVIEW} from './policy.js';
 import {createPanorama} from './panorama.js';
 
 export async function attachImagery(map, viewId) {
   const base=`/v/${encodeURIComponent(viewId)}/imagery`;
   const get=async path=>{const response=await fetch(`${base}${path}`);if(!response.ok)throw Error('Bilddata kunde inte laddas');return response.json();};
-  const {sites,basemaps}=await get('/catalogue');if(!sites.length)return;
+  const {sites,basemaps}=await get('/catalogue');
+  const mapContainer=map.getContainer(), stage=mapContainer.parentElement;
+  const navigation=document.createElement('section');navigation.className='imagery-navigation';navigation.setAttribute('aria-label','Område och bakgrund');
+  const areaLabel=document.createElement('label');areaLabel.textContent='Område';navigation.append(areaLabel);
+  const select=document.createElement('select');select.setAttribute('aria-label','Visa område');
+  select.add(new Option('Välj område…',''));select.add(new Option('Sundsvall','sundsvall'));
+  sites.forEach(site=>select.add(new Option(site.label,site.id)));areaLabel.append(select);
+  const backgroundLabel=document.createElement('label');backgroundLabel.textContent='Bakgrund';navigation.append(backgroundLabel);
+  const background=document.createElement('select');background.setAttribute('aria-label','Kartbakgrund');
+  background.add(new Option('CARTO','carto'));
+  const stockholmOptions=[];
+  for(const item of basemaps?.layers||[]){const option=new Option(item.label,item.id);background.add(option);stockholmOptions.push(option);}
+  background.value='carto';backgroundLabel.append(background);
+  map.getContainer().append(navigation);
   const root=document.createElement('section');root.className='imagery-controls';root.setAttribute('aria-label','3D och gatubilder');
+  root.hidden=true;
   const title=document.createElement('strong');title.textContent='3D och gatubilder';root.append(title);
-  const select=document.createElement('select');select.setAttribute('aria-label','Visa demonstrationsområde');
-  select.add(new Option('Välj område…',''));sites.forEach(site=>select.add(new Option(site.label,site.id)));root.append(select);
-  const background=document.createElement('select');background.setAttribute('aria-label','Bakgrund i Stockholm');
-  for(const item of basemaps?.layers||[])background.add(new Option(item.label,item.id));
-  if(basemaps)root.append(background);
   const status=document.createElement('span');status.setAttribute('role','status');status.textContent='Laddas när området visas';root.append(status);
   map.getContainer().append(root);
   const routes=new Map(), scenes=new Map(), pending=new Set(), markers=new Map();
   let renderer=null, rendererKey='', generation=0, removed=false, styleTimer=null, current=null, pano=null;
   const panel=document.createElement('section');panel.className='imagery-panorama';panel.hidden=true;panel.setAttribute('aria-label','Gatubild');
+  const travel=document.createElement('nav');travel.className='imagery-panorama-navigation';travel.setAttribute('aria-label','Navigera mellan 360-bilder');panel.append(travel);
   const image=document.createElement('div');image.className='imagery-panorama-image';panel.append(image);
   const tools=document.createElement('div');tools.className='imagery-panorama-tools';panel.append(tools);
-  const button=(label,fn)=>{const el=document.createElement('button');el.type='button';el.textContent=label;el.onclick=fn;tools.append(el);return el;};
-  const previous=button('Föregående',()=>navigate(-1)), next=button('Nästa',()=>navigate(1));
-  const details=document.createElement('span');tools.append(details);
+  const button=(label,fn,parent=tools)=>{const el=document.createElement('button');el.type='button';el.textContent=label;el.onclick=fn;parent.append(el);return el;};
+  const previous=button('← Bakåt',()=>navigate(-1),travel);previous.setAttribute('aria-label','Bakåt till föregående 360-bild');
+  const details=document.createElement('span');details.setAttribute('role','status');travel.append(details);
+  const next=button('Framåt →',()=>navigate(1),travel);next.setAttribute('aria-label','Framåt till nästa 360-bild');
+  button('Till kartan',closePanorama,travel).setAttribute('aria-label','Tillbaka till kartan');
   const crop=document.createElement('a');crop.textContent='Öppna perspektivbild';crop.target='_blank';crop.rel='noopener';tools.append(crop);
   button('Källa & kameradata',()=>{
     if(current)document.dispatchEvent(new CustomEvent('geodata:imagery-evidence',{
       detail:{site:{id:current.site.id,label:current.site.label},frame:current.frame,camera:pano?.state()||{}}}));
   });
-  button('Stäng gatubild',closePanorama);
+  const ortho=button('Visa ortofoto och förändringar',()=>{closePanorama();document.getElementById('inspector')?.focus();});
   const note=document.createElement('p');note.textContent='GPS visar kamerans position. Bildens kompassriktning är okänd; objektens markkoordinater kan inte beräknas utan djupdata.';tools.append(note);
-  map.getContainer().append(panel);
+  stage.append(panel);
+  const resize=new ResizeObserver(()=>{if(!removed)map.resize();});resize.observe(mapContainer);
   function updateCrop(state) {
     if (!current) return;
     const height=Math.max(64,Math.min(2048,Math.round(1536*image.clientHeight/Math.max(1,image.clientWidth))));
@@ -37,6 +50,10 @@ export async function attachImagery(map, viewId) {
   }
   async function openPanorama(site,frame) {
     current={site,frame};panel.hidden=false;
+    stage.classList.add('imagery-mode');
+    const trace=document.getElementById('trace-panel');if(trace)trace.hidden=true;
+    map.resize();
+    ortho.hidden=!document.getElementById('inspector')?.children.length;
     details.textContent='Laddar gatubild…';
     const all=routes.get(site.id).frames, index=all.indexOf(frame);previous.disabled=index===0;next.disabled=index===all.length-1;
     try {
@@ -46,9 +63,9 @@ export async function attachImagery(map, viewId) {
     }catch(error){if(error.name!=='AbortError')details.textContent=error.message;}
   }
   function navigate(step){if(!current)return;const all=routes.get(current.site.id).frames;const frame=all[all.indexOf(current.frame)+step];if(frame)openPanorama(current.site,frame);}
-  function closePanorama(){panel.hidden=true;pano?.dispose();pano=null;current=null;}
+  function closePanorama(){const open=!panel.hidden;panel.hidden=true;stage.classList.remove('imagery-mode');pano?.dispose();pano=null;current=null;if(open&&!removed)map.resize();}
   function escape(event){if(event.key==='Escape')closePanorama();}document.addEventListener('keydown',escape);
-  select.onchange=()=>{const site=sites.find(s=>s.id===select.value);if(site){closePanorama();map.flyTo({...site.overview,duration:1200});select.value='';}};
+  select.onchange=()=>{const overview=select.value==='sundsvall'?SUNDSVALL_OVERVIEW:sites.find(s=>s.id===select.value)?.overview;if(overview){closePanorama();map.flyTo({...overview,duration:1200});select.value='';}};
   const siteMarkers=sites.map(site=>{
     const element=document.createElement('button');element.type='button';element.className='imagery-site';element.textContent=`${site.label} · 3D/360°`;
     element.onclick=()=>{select.value=site.id;select.onchange();};
@@ -70,7 +87,9 @@ export async function attachImagery(map, viewId) {
     }
   }
   background.onchange=addBackgrounds;
+  function aroundStockholm(){const c=map.getCenter();return stockholmView([c.lng,c.lat],map.getZoom(),basemaps?.bounds);}
   function visibleSites(minZoom=13) {
+    if(!aroundStockholm())return [];
     const b=map.getBounds();return activeSites(sites,[b.getWest(),b.getSouth(),b.getEast(),b.getNorth()],map.getZoom(),minZoom);
   }
   function updateRoutes(){
@@ -99,6 +118,9 @@ export async function attachImagery(map, viewId) {
   }
   async function update(){
     if(removed||document.hidden)return;
+    const nearby=aroundStockholm();root.hidden=!nearby||!sites.length;
+    stockholmOptions.forEach(option=>{option.disabled=!nearby;});
+    if(!nearby){background.value='carto';closePanorama();}
     const selected=visibleSites();
     for(const site of selected){
       if(pending.has(site.id))continue;
@@ -124,6 +146,6 @@ export async function attachImagery(map, viewId) {
   // Pause and release GPU allocations when the tab is hidden. Return is automatic.
   function visibility(){if(document.hidden){generation++;renderer?.dispose();renderer=null;rendererKey='';}else update();}
   document.addEventListener('visibilitychange',visibility);
-  map.on('remove',()=>{removed=true;generation++;renderer?.dispose();closePanorama();siteMarkers.forEach(m=>m.remove());markers.forEach(list=>list.forEach(m=>m.remove()));clearTimeout(styleTimer);document.removeEventListener('keydown',escape);document.removeEventListener('visibilitychange',visibility);root.remove();panel.remove();});
+  map.on('remove',()=>{removed=true;resize.disconnect();generation++;renderer?.dispose();closePanorama();siteMarkers.forEach(m=>m.remove());markers.forEach(list=>list.forEach(m=>m.remove()));clearTimeout(styleTimer);document.removeEventListener('keydown',escape);document.removeEventListener('visibilitychange',visibility);navigation.remove();root.remove();panel.remove();});
   update();
 }

@@ -232,6 +232,7 @@
     const panel = document.createElement("aside");
     panel.id = "trace-panel"; panel.hidden = true; panel.setAttribute("aria-label", copy.sv.title);
     panel.innerHTML = '<div class="trace-header"><h2></h2><button data-language type="button">EN</button>' +
+      '<button data-panorama class="trace-panorama-return" type="button">Gatubild</button>' +
       '<button data-refresh type="button">↻</button><button data-close type="button">×</button></div><div class="trace-tabs" role="group">' +
       '<button data-tab="map" type="button"></button><button data-tab="feature" type="button"></button></div>' +
       '<div class="trace-content" tabindex="0" aria-live="polite"></div>';
@@ -245,6 +246,7 @@
       panel.querySelector("[data-close]").setAttribute("aria-label", t().close);
       panel.querySelector("[data-refresh]").setAttribute("aria-label", t().refresh);
       panel.querySelector("[data-language]").textContent = language === "sv" ? "EN" : "SV";
+      panel.querySelector("[data-panorama]").textContent = language === "sv" ? "Till gatubilden" : "Back to panorama";
       panel.querySelectorAll("[data-tab]").forEach(button => {
         button.textContent = t()[button.dataset.tab];
         button.setAttribute("aria-pressed", String(tab === button.dataset.tab));
@@ -274,6 +276,7 @@
     }
     trigger.onclick = () => panel.hidden ? open("map") : close();
     panel.querySelector("[data-close]").onclick = close;
+    panel.querySelector("[data-panorama]").onclick = close;
     panel.querySelector("[data-refresh]").onclick = () => { tab = "map"; load(); };
     panel.querySelector("[data-language]").onclick = () => { language = language === "sv" ? "en" : "sv"; render(); };
     panel.querySelectorAll("[data-tab]").forEach(button => button.onclick = () => open(button.dataset.tab));

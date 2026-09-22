@@ -1,10 +1,16 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import {activeSites, routeFeatures} from '../static/imagery/policy.js';
+import {activeSites, routeFeatures, stockholmView, SUNDSVALL_OVERVIEW} from '../static/imagery/policy.js';
 import {siteBudgets, siteTransform, mercatorFrame} from './map-sites.js';
 
 const sites=[{id:'a',bounds:[18,59.2,18.1,59.3]},{id:'b',bounds:[18,59.3,18.1,59.4]}];
+test('Stockholm controls require a nearby camera target and geographic zoom',()=>{
+  assert.equal(stockholmView([18.08,59.32],14),true);
+  assert.equal(stockholmView([18.08,59.32],8),false);
+  assert.equal(stockholmView(SUNDSVALL_OVERVIEW.center,16),false);
+  assert.equal(stockholmView([17.5,60.3],16),false,'a far-away pitched horizon must not activate controls');
+});
 test('Sundsvall and country overview do not activate Stockholm assets',()=>{
   assert.deepEqual(activeSites(sites,[17.1,62.2,17.6,62.6],15),[]);
   assert.deepEqual(activeSites(sites,[10,50,25,70],8),[]);

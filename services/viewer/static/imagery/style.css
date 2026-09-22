@@ -1,9 +1,29 @@
-.imagery-controls{position:absolute;z-index:5;left:12px;bottom:36px;max-width:min(280px,80vw);display:grid;gap:5px;background:#fffffff2;color:#18323a;border:1px solid #ccd7dc;border-radius:8px;padding:10px 12px;box-shadow:0 2px 10px #15313d25;font:12px/1.4 system-ui}
-.imagery-controls select{font:inherit;padding:5px;border:1px solid #a9bac4;border-radius:4px;background:#fff;color:inherit}.imagery-controls strong{font-size:13px}
+.imagery-controls,.imagery-navigation{position:absolute;left:12px;background:#fffffff2;color:#18323a;border:1px solid #ccd7dc;border-radius:8px;padding:10px 12px;box-shadow:0 2px 10px #15313d25;font:12px/1.4 system-ui;box-sizing:border-box}
+.imagery-navigation{z-index:14;bottom:36px;display:flex;gap:12px;max-width:calc(100% - 24px)}
+.imagery-navigation label{display:grid;gap:4px;min-width:0;font-weight:600}.imagery-navigation select{min-width:0;max-width:100%;font:inherit;font-weight:400;padding:6px;border:1px solid #a9bac4;border-radius:4px;background:#fff;color:inherit}
+.imagery-controls{z-index:5;bottom:130px;max-width:min(280px,80vw);display:grid;gap:5px}.imagery-controls strong{font-size:13px}.imagery-controls[hidden]{display:none}
 .imagery-splats{position:absolute;inset:0;pointer-events:none;z-index:1}
 .imagery-photo{border:1px solid white;background:#167fc1;border-radius:50%;width:10px;height:10px;padding:0;box-shadow:0 1px 3px #0008;cursor:pointer;z-index:3}.imagery-photo:hover,.imagery-photo:focus{background:#fdc94b;outline:2px solid #146da1;z-index:4}
 .imagery-site{font:600 12px system-ui;white-space:nowrap;border:1px solid white;border-radius:12px;background:#185c73;color:white;padding:6px 10px;cursor:pointer;z-index:3}
-.imagery-panorama{position:absolute;z-index:8;right:12px;top:12px;width:min(65vw,1000px);height:min(70vh,720px);display:flex;flex-direction:column;background:#10202b;border:1px solid #b8c5cc;border-radius:9px;overflow:hidden;box-shadow:0 8px 36px #071d4166}
-.imagery-panorama[hidden]{display:none}.imagery-panorama-image{position:relative;flex:1;min-height:100px;overflow:hidden}.imagery-panorama-image canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
-.imagery-panorama-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:9px;background:#fff;color:#18323a;font:12px/1.4 system-ui}.imagery-panorama-tools button,.imagery-panorama-tools a{font:inherit;padding:5px 8px;border:1px solid #ccd7dc;background:#f6f9fa;color:#174d69;border-radius:4px;cursor:pointer}.imagery-panorama-tools p{margin:0;width:100%;font-size:11px;color:#526776}
-@media(max-width:640px){.imagery-panorama{left:8px;right:8px;width:auto;top:8px;height:65vh}.imagery-controls{bottom:28px;max-width:220px}}
+.imagery-panorama{position:absolute;z-index:8;inset:0;display:flex;flex-direction:column;background:#10202b;overflow:hidden}
+.imagery-panorama[hidden]{display:none}.imagery-panorama-image{position:relative;flex:1;min-height:60px;overflow:hidden}.imagery-panorama-image canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+.imagery-panorama-navigation{display:flex;flex:none;gap:6px;align-items:center;padding:6px;background:#fff;color:#18323a;font:12px/1.4 system-ui}
+.imagery-panorama-navigation span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.imagery-panorama-navigation button{flex:none;min-height:40px;font:600 12px system-ui;border:1px solid #a9bac4;border-radius:4px;padding:6px 10px;background:#f6f9fa;color:#174d69;cursor:pointer}
+.imagery-panorama-navigation button:disabled{opacity:.45;cursor:default}
+.imagery-panorama-tools{display:flex;flex:none;gap:8px;align-items:center;flex-wrap:wrap;max-height:30%;overflow:auto;padding:9px;background:#fff;color:#18323a;font:12px/1.4 system-ui}.imagery-panorama-tools button,.imagery-panorama-tools a{font:inherit;padding:5px 8px;border:1px solid #ccd7dc;background:#f6f9fa;color:#174d69;border-radius:4px;cursor:pointer}.imagery-panorama-tools p{margin:0;width:100%;font-size:11px;color:#526776}
+.imagery-panorama-tools [hidden]{display:none}
+/* Street-view mode retains the live 3D map as a separate bottom-left inset. */
+.map-stage.imagery-mode #map{inset:auto;left:12px;bottom:12px;width:30%;max-width:320px;min-width:180px;height:220px;max-height:30%;z-index:10;border:2px solid white;border-radius:8px;overflow:hidden;box-shadow:0 3px 16px #0006}
+.imagery-mode #map .imagery-navigation,.imagery-mode #map .imagery-controls,.imagery-mode #map .maplibregl-ctrl-bottom-right,.imagery-mode #map .maplibregl-ctrl-bottom-left{display:none}
+.map-stage.imagery-mode #inspector,.map-stage.imagery-mode #legend,.map-stage.imagery-mode .trace-toggle{display:none!important}
+.imagery-mode .imagery-panorama-tools{padding-left:min(35%,350px);min-height:50px}
+.map-stage.imagery-mode #trace-panel{top:12px;bottom:250px}
+.map-stage.imagery-mode:has(#trace-panel:not([hidden])) .imagery-panorama{left:444px}
+.map-stage:not(:has(.imagery-panorama:not([hidden]))) .trace-panorama-return{display:none}
+.trace-header:has(.trace-panorama-return){flex-wrap:wrap}.trace-header .trace-panorama-return{font-size:12px}
+@media(max-width:900px){
+  .map-stage.imagery-mode:has(#trace-panel:not([hidden])) .imagery-panorama,.map-stage.imagery-mode:has(#trace-panel:not([hidden])) #map{visibility:hidden}
+  .map-stage.imagery-mode #trace-panel{top:12px;bottom:12px;width:calc(100% - 24px)}
+}
+@media(max-width:640px){.imagery-navigation{bottom:28px;left:8px;right:8px;max-width:none;padding:8px;gap:8px}.imagery-navigation label{flex:1}.imagery-controls{bottom:122px;max-width:220px}.imagery-panorama-navigation{flex-wrap:wrap}.imagery-panorama-navigation span{order:2;flex-basis:100%}.imagery-panorama-navigation button{padding:6px 8px}.map-stage.imagery-mode #map{left:8px;bottom:8px;min-width:120px;width:34%;height:150px}.imagery-mode .imagery-panorama-tools{padding-left:38%;font-size:11px}}
