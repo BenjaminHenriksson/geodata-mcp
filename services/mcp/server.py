@@ -118,7 +118,12 @@ async def healthz(request: Request) -> JSONResponse:
 @audit.tool(_ws)
 def search(query: str | None = None, id: str | None = None, kind: str | None = None,
            limit: int = 15, ctx: Context = None, workspace_id: str | None = None) -> dict:
-    """Search the municipal geodata catalog (Sundsvall) — datasets, sources and documents.
+    """Search municipal geodata and published 360 street imagery — datasets, sources and documents.
+
+    For panoramas, 360 photos, street views or splats, search(query='360 panorama').
+    This returns published imagery sites and exact analyze(id='imagery') calls to
+    find camera positions and SEE perspective images. These images are available
+    through the imagery processor even though they are not municipal SQL datasets.
 
     Hybrid search: fuzzy trigram matching plus semantic vector similarity over dataset
     titles/descriptions AND over PDF/document text chunks. Swedish works well
@@ -132,7 +137,7 @@ def search(query: str | None = None, id: str | None = None, kind: str | None = N
         chunks are matching document passages with document title + source_url.
       id: a dataset uuid — returns the full catalog row (schema summary, extent, feature
         count), its source (license, attribution, trust) and provenance history instead.
-      kind: optional filter: 'vector' | 'raster_ref' | 'document' | 'table'.
+      kind: optional filter: 'vector' | 'raster_ref' | 'document' | 'table' | 'imagery'.
       limit: max datasets returned (default 15).
 
     The whole catalog is also plain SQL: catalog.datasets and catalog.sources are readable

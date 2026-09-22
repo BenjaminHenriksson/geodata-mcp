@@ -1,7 +1,9 @@
 """Implementation of the search tool: hybrid trigram + vector search over the catalog."""
 
 import httpx
+import re
 from psycopg.rows import dict_row
+from geodata_common import imagery
 
 import config
 import db
@@ -165,6 +167,28 @@ def _chunk_arms(query: str, vec: list[float] | None):
 
 
 def hybrid_search(query: str, kind: str | None, limit: int) -> dict:
+    # Published street imagery lives in its mounted catalogue, not municipal SQL.
+    # Resolve explicit image requests before semantic search returns unrelated layers.
+    if kind == "imagery" or re.search(
+        r"\b360\b|panoram|gatubil|gatufoto|street.?view|street imagery|gaussian|splat|virtuell.*rund",
+        query, re.IGNORECASE,
+    ):
+        try:
+            catalog = imagery.catalogue()
+        except (OSError, ValueError):
+            return {"error": "Published street imagery catalogue is temporarily unavailable"}
+        sites = catalog["sites"]
+        return {
+            "datasets": [], "chunks": [], "embedding_used": False,
+            "imagery": catalog,
+            "coverage_note": "Only the listed sites have published 360 imagery; their bounds use longitude/latitude.",
+            "next_calls": [{"tool": "analyze", "arguments": {
+                "op": "run", "id": "imagery", "params": {
+                    "operation": "search", "site_id": site["id"], "limit": 5,
+                },
+            }} for site in sites if site["has_panoramas"]][:limit],
+            "inspection": "After search, call analyze(op='run', id='imagery', params={operation:'view', site_id:<returned site_id>, frame_id:<returned frame id>, yaw:0, pitch:0, hfov:90}). This returns an actual perspective image for visual inspection. Use next_offset to page through camera positions; vary yaw to look around. Do not call load on imagery site IDs.",
+        }
     vec = embed_query(query)
     ds_best = _merge_ranked(_dataset_arms(query, kind, limit, vec), key="id")
     datasets = sorted(ds_best.values(), key=lambda d: d["score"], reverse=True)[:limit]
