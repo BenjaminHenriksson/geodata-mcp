@@ -447,7 +447,7 @@ __HEADER__
 
 MAP_CSS = """
 .map-stage #map,.map-stage #app-wrapper{position:absolute;inset:0;height:100%;width:100%}
-#load-status{position:absolute;left:12px;bottom:56px;z-index:11;background:white;border:1px solid var(--line);border-radius:4px;padding:6px 10px;max-width:calc(100% - 48px);font:12px/1.5 var(--font);pointer-events:none}
+#load-status{position:absolute;left:60px;top:12px;z-index:11;background:white;border:1px solid var(--line);border-radius:4px;padding:6px 10px;max-width:calc(100% - 96px);font:12px/1.5 var(--font);pointer-events:none}
 .map-stage #inspector,.map-stage #legend,.map-stage #note,.map-stage #error{
 box-sizing:border-box;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);color:var(--ink);font:13px/1.5 var(--font)}
 #inspector{position:absolute;top:12px;right:12px;z-index:11;display:none;padding:12px;width:230px;max-width:calc(100% - 74px)}
