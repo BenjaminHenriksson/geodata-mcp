@@ -23,6 +23,10 @@ export async function attachImagery(map, viewId) {
   const previous=button('Föregående',()=>navigate(-1)), next=button('Nästa',()=>navigate(1));
   const details=document.createElement('span');tools.append(details);
   const crop=document.createElement('a');crop.textContent='Öppna perspektivbild';crop.target='_blank';crop.rel='noopener';tools.append(crop);
+  button('Källa & kameradata',()=>{
+    if(current)document.dispatchEvent(new CustomEvent('geodata:imagery-evidence',{
+      detail:{site:{id:current.site.id,label:current.site.label},frame:current.frame,camera:pano?.state()||{}}}));
+  });
   button('Stäng gatubild',closePanorama);
   const note=document.createElement('p');note.textContent='GPS visar kamerans position. Bildens kompassriktning är okänd; objektens markkoordinater kan inte beräknas utan djupdata.';tools.append(note);
   map.getContainer().append(panel);

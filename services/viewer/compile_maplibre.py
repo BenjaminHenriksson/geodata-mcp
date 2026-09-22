@@ -231,7 +231,9 @@ def compile_style(conn, view):
                 "title": title,
                 "extent_4326": extent_4326,
                 "legend": legend if spec.get("legend", True) else [],
-                "popups": popups}
+                "popups": popups,
+                "feature_layers": {layer_id: ref for ref, ids in layer_ids_by_ref.items()
+                                   if not ref.startswith("wms:") for layer_id in ids}}
 
     compare = _compare_metadata(spec.get("compare"), layer_ids_by_ref)
     if compare:

@@ -20,8 +20,10 @@ import imagery_routes
 import obs
 import page
 import service_admin
+import traceability
 import viewer_auth
 from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -452,6 +454,34 @@ def style_json(view_id: api.ViewId, request: Request):
             return Response(status_code=304, headers={"ETag": etag})
         style = compile_maplibre.compile_style(conn, view)
     return JSONResponse(style, headers={"ETag": etag, "Cache-Control": "no-cache"})
+
+
+
+@app.get("/v/{view_id}/traceability", tags=["map"], summary="Map sources, processing and owner-scoped audit",
+         responses={**api.UNKNOWN_VIEW, 200: api.content("Recorded sources and processing for this map; audit summaries require workspace ownership.")})
+def map_traceability(view_id: api.ViewId, request: Request):
+    key_id = _manager_key_id(request)
+    with dbq.get_pool().connection() as conn:
+        view = _load_view(conn, view_id)
+        owner = bool(key_id and view.get("workspace_id")
+                     and dbq.workspace_owned(conn, key_id, view["workspace_id"]))
+        data = traceability.map_details(conn, view, owner=owner)
+    return JSONResponse(jsonable_encoder(data), headers={"Cache-Control": "private, no-store"})
+
+
+@app.get("/v/{view_id}/feature-evidence", tags=["map"], summary="Recorded evidence for a feature in this map",
+         responses={**api.UNKNOWN_VIEW, **api.errors({403: "Layer excluded from this map.", 404: "Feature or stable feature key unavailable."}),
+                    200: api.content("Allowlisted source references and analysis evidence; never arbitrary table columns.")})
+def map_feature_evidence(view_id: api.ViewId, layer: str = Query(..., max_length=140),
+                         key: str = Query("fid", pattern="^(fid|id)$"),
+                         identity: str = Query(..., min_length=1, max_length=200)):
+    with dbq.get_pool().connection() as conn:
+        schema, table, columns = _checked_layer(conn, layer, view_id)
+        data = traceability.feature_record(conn, schema, table, columns, key, identity)
+    if data is None:
+        raise HTTPException(status_code=404, detail="feature evidence unavailable")
+    return JSONResponse(jsonable_encoder({"layer": layer, "properties": data}),
+                        headers={"Cache-Control": "private, no-store"})
 
 
 @app.get("/v/{view_id}/origo.json", tags=["map"], summary="Origo/OpenLayers configuration",

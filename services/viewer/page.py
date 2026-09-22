@@ -10,6 +10,7 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
 <title>Kartvy</title>
 <link rel="stylesheet" href="/static/maplibre-gl.css">
 <link rel="stylesheet" href="/static/imagery/style.css">
+<link rel="stylesheet" href="/static/traceability.css">
 <style>__UI_CSS__
 __MAP_CSS__</style>
 </head>
@@ -23,6 +24,7 @@ __HEADER__
 <div id="error" role="alert"><span id="error-message"></span><button id="retry" type="button">Ladda om</button></div>
 </div>
 <script nonce="__NONCE__" src="/static/maplibre-gl.js"></script>
+<script nonce="__NONCE__" src="/static/traceability.js"></script>
 <script nonce="__NONCE__">
 (function () {
   "use strict";
@@ -35,6 +37,8 @@ __HEADER__
   var etag = null;
   var currentExtent = null;
   var popups = {};
+  var featureLayers = {};
+  var tracePanel = GeodataTraceability.attach(VIEW_ID);
   var fetching = false;
   var compareMeta = null;       // md.compare: before/after imagery + change layer ids
   var imageryMode = "map";      // "map" | "before" | "after"
@@ -216,6 +220,8 @@ __HEADER__
   function applyMetadata(md) {
     md = md || {};
     popups = md.popups || {};
+    featureLayers = md.feature_layers || {};
+    tracePanel.invalidate();
     var bar = document.getElementById("titlebar");
     if (md.title) {
       bar.textContent = md.title;
@@ -230,7 +236,7 @@ __HEADER__
 
   function popupLayerIds() {
     if (!map) { return []; }
-    return Object.keys(popups).filter(function (id) { return map.getLayer(id); });
+    return Object.keys(Object.assign({}, popups, featureLayers)).filter(function (id) { return map.getLayer(id); });
   }
 
   function onMouseMove(e) {
@@ -246,6 +252,9 @@ __HEADER__
     var feats = map.queryRenderedFeatures(e.point, { layers: ids });
     if (!feats.length) { return; }
     var f = feats[0];
+    if (featureLayers[f.layer.id]) {
+      tracePanel.feature(featureLayers[f.layer.id], f.properties || {});
+    }
     var attrs = popups[f.layer.id] || [];
     var rows = "";
     attrs.forEach(function (a) {
