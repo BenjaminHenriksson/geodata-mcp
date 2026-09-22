@@ -1,4 +1,4 @@
-FROM node:22-slim AS imagery-build
+FROM node:26-slim AS imagery-build
 WORKDIR /src/services/viewer/imagery
 COPY services/viewer/imagery/package*.json ./
 RUN npm ci --ignore-scripts
