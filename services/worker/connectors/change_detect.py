@@ -22,6 +22,7 @@ import psycopg
 from osgeo import gdal, ogr, osr
 from PIL import Image
 from psycopg import sql
+from psycopg.types.json import Jsonb
 
 import dbutil
 from geodata_common import netauth
@@ -535,6 +536,8 @@ def _write_vision_candidates(cur, tbl, rows, collection_a, collection_b,
             geometry_kind text NOT NULL DEFAULT 'bbox',
             tile_id text NOT NULL, change_type text NOT NULL, confidence_label text NOT NULL,
             before_description text, after_description text, evidence text,
+            source_tiles text[] NOT NULL, observation_count integer NOT NULL,
+            observations jsonb NOT NULL, merge_method text NOT NULL,
             geom geometry(Polygon, 3014)
         )
     """).format(tbl=tbl))
@@ -545,20 +548,27 @@ def _write_vision_candidates(cur, tbl, rows, collection_a, collection_b,
                        %s::text AS change_class, %s::text AS change_type,
                        %s::text AS confidence_label, %s::text AS before_description,
                        %s::text AS after_description, %s::text AS evidence,
+                       %s::text[] AS source_tiles, %s::integer AS observation_count,
+                       %s::jsonb AS observations, %s::text AS merge_method,
                        ST_Transform(ST_MakeEnvelope(%s, %s, %s, %s, 3006), 3014) AS geom
             )
             INSERT INTO {tbl} (tile_id, concept, change_class, change_type, confidence_label,
                               before_description, after_description, evidence,
+                              source_tiles, observation_count, observations, merge_method,
                               geom, area_m2, vintage_a, vintage_b, datetime_a, datetime_b)
             SELECT tile_id, concept, change_class, change_type, confidence_label,
-                   before_description, after_description, evidence, geom, ST_Area(geom),
-                   %s, %s, %s::timestamptz, %s::timestamptz
+                   before_description, after_description, evidence,
+                   source_tiles, observation_count, observations, merge_method,
+                   geom, ST_Area(geom), %s, %s, %s::timestamptz, %s::timestamptz
               FROM candidate
              WHERE ST_Area(geom) >= %s
                AND ST_Intersects(geom, ST_GeomFromText(%s, 3014))
         """).format(tbl=tbl),
-            [(*row, collection_a, collection_b, meta_a["datetime_min"], meta_b["datetime_min"],
-              min_area, area_wkt) for row in rows])
+            [(*candidate.row[:8], [o["tile_id"] for o in candidate.observations],
+              len(candidate.observations), Jsonb(candidate.observations), candidate.merge_method,
+              *candidate.row[8:], collection_a, collection_b,
+              meta_a["datetime_min"], meta_b["datetime_min"], min_area, area_wkt)
+             for candidate in rows])
 
 
 def _write_outputs(conn, job, schema: str, table: str, cov_table: str,

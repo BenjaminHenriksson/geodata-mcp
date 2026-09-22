@@ -8,3 +8,4 @@ services/segmenter/segmenter.log
 *.egg-info/
 build/
 dist/
+.evaluation/

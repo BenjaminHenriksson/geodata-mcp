@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 from unittest.mock import MagicMock, Mock
 
 import httpx
@@ -147,3 +148,71 @@ def test_missing_endpoint_does_not_contact_any_provider(monkeypatch):
     monkeypatch.delenv("VISION_BASE_URL", raising=False)
     with pytest.raises(RuntimeError, match="VISION_BASE_URL"):
         vision.settings()
+
+
+def test_retry_after_is_respected_and_attempts_are_reported(monkeypatch):
+    calls, cooldowns = [], []
+    def detect(*args):
+        calls.append(True)
+        if len(calls) < 3:
+            raise vision.vision_api.EndpointError(429, 7)
+        return [], {"prompt_tokens": 9}
+    monkeypatch.setattr(vision, "detect", detect)
+    monkeypatch.setattr(vision._RetryGate, "defer", lambda self, seconds: cooldowns.append(seconds))
+    statuses = {"r0c0": None}
+    _, info = vision.infer(None, [(WINDOW, {})], ["building"], {}, statuses, ("key", 1))
+    assert cooldowns == [7, 7]
+    assert info["request_attempts"] == 3 and info["requests"] == 1
+    assert info["usage_cumulative"]["prompt_tokens"] == 9 and info["complete"]
+
+
+def test_partial_failure_is_explicit_and_does_not_discard_successful_tiles(monkeypatch):
+    def detect(client, key, pngs, concepts, collections, w):
+        if w["tile_id"] == "bad":
+            raise vision.vision_api.EndpointError(422)
+        return [detection()], {}
+    monkeypatch.setattr(vision, "detect", detect)
+    statuses = {"good": None, "bad": None}
+    rows, info = vision.infer(None, [({**WINDOW, "tile_id": t}, {}) for t in statuses],
+                              ["building"], {}, statuses, ("key", 2))
+    assert len(rows) == 1 and statuses == {"good": "analyzed", "bad": "error"}
+    assert info["tile_failures"] == {"bad": {"reason": "http_422", "attempts": 1}}
+    assert not info["complete"]
+
+
+def test_cancelled_run_does_not_submit_requests_or_claim_complete(monkeypatch):
+    detect = Mock()
+    monkeypatch.setattr(vision, "detect", detect)
+    cancel = threading.Event()
+    cancel.set()
+    statuses = {"r0c0": None, "remaining": None}
+    rows, info = vision.infer(None, [(WINDOW, {})], ["building"], {}, statuses,
+                              ("key", 4), cancel=cancel)
+    assert not rows and set(statuses.values()) == {"cancelled"}
+    assert not info["complete"] and info["request_attempts"] == 0
+    detect.assert_not_called()
+
+
+def test_result_order_is_independent_of_completion_order(monkeypatch):
+    def detect(client, key, pngs, concepts, collections, w):
+        if w["tile_id"] == "a":
+            time.sleep(.02)
+        return [detection()], {}
+    monkeypatch.setattr(vision, "detect", detect)
+    statuses = {t: None for t in "ab"}
+    rows, info = vision.infer(None, [({**WINDOW, "tile_id": t}, {}) for t in "ab"],
+                              ["building"], {}, statuses, ("key", 2))
+    assert len(rows) == 1 and rows[0].row[0] == "a"
+    assert info["reconciliation"] == {
+        "raw_candidates": 2, "candidates": 1, "method": "conservative_complete_link"}
+    assert info["usage_cumulative"] == {"prompt_tokens": 0, "completion_tokens": 0, "cost": 0}
+    assert info["reported_usage_only"] is True
+
+
+def test_retry_after_http_header_is_typed_without_leaking_body():
+    with httpx.Client(transport=httpx.MockTransport(
+            lambda _: httpx.Response(429, headers={"Retry-After": "12"}, text="private"))) as client:
+        with pytest.raises(vision.vision_api.EndpointError) as error:
+            vision.detect(client, "key", {"a": b"a", "b": b"b"}, ["building"], {}, WINDOW)
+    assert error.value.status_code == 429 and error.value.retry_after == 12
+    assert "private" not in str(error.value)
