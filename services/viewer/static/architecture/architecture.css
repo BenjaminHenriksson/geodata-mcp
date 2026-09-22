@@ -53,6 +53,7 @@
 .diagram-legend i{display:inline-block;width:7px;height:11px;border-radius:2px}
 .architecture #clear-selection{border:0;background:none;text-decoration:underline;padding:0;font-size:12px;margin-left:auto;color:#156598}
 #component-detail{border-left:1px solid var(--line);padding:26px 23px;background:#fff;min-width:0}
+.architecture #back-to-diagram{display:none;font-size:12px;margin-bottom:20px}
 .architecture #component-detail h2{font-size:24px;line-height:1.2;letter-spacing:-.45px;margin:8px 0 15px}
 .detail-kind{display:block;color:#4d6d81;font-size:12px}
 .architecture #component-detail p{font-size:13px;line-height:1.7;margin:0 0 16px}
@@ -104,6 +105,7 @@
 [hidden]{display:none!important}
 @media(min-width:1450px){.explorer-body{grid-template-columns:minmax(0,1fr) 335px}}
 @media(max-width:1080px){.explorer-body{grid-template-columns:minmax(0,1fr)}#component-detail{border-left:0;border-top:1px solid var(--line)}
+.architecture #back-to-diagram{display:inline-block}
 #detail-intro{display:grid;grid-template-columns:1fr 1fr;gap:0 26px}#detail-intro .detail-kind,#detail-intro>h2,#detail-intro>.snapshot-note{grid-column:1/-1}
 .intro-note{margin:0;padding-top:0;border:0}.diagram-viewport{height:580px}.boundary-notes{gap:20px}}
 @media(max-width:680px){.app-main:has(.architecture){padding:24px 12px}.arch-heading{display:block;margin-bottom:22px}.architecture h1{font-size:31px;letter-spacing:-.8px}

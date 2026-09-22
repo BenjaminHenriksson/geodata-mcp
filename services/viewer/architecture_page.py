@@ -192,7 +192,7 @@ def render(principal, csrf):
     flow_data = {key: {"title": title, "description": desc, "steps": [
         {"title": title, "text": text, "edges": edges} for title, text, edges in steps]}
         for key, (title, desc, steps) in FLOWS.items()}
-    body = f'''<link rel="stylesheet" href="/static/architecture/architecture.css?v=1">
+    body = f'''<link rel="stylesheet" href="/static/architecture/architecture.css?v=2">
 <div class="architecture" lang="en" data-flows="{e(json.dumps(flow_data))}">
   <header class="arch-heading"><div><p class="arch-context">Architecture / Govtech4all pilot</p>
   <h1>How a question becomes a map.</h1><p>Eneo brings the conversation. Geodata MCP turns it into data, analysis and maps.
@@ -230,6 +230,7 @@ def render(principal, csrf):
         </div>
       </div>
       <aside id="component-detail" aria-label="Component details" aria-live="polite">
+        <button id="back-to-diagram">Back to diagram</button>
         <div id="detail-intro"><span class="detail-kind">A guide to the system</span><h2>One conversation.<br>Several distinct systems.</h2>
           <p>Click any component to see its responsibilities, stored data and connections.</p>
           <div class="intro-note"><h3>Gemma is the default</h3><p>Chat and change detection both use the paid external model, through separate calls. SAM3 remains a local option.</p></div>
@@ -259,5 +260,5 @@ def render(principal, csrf):
   </section>
   <details class="component-reference"><summary>Complete component reference</summary>{''.join(f'<section><h3>{e(n[3])}</h3><p>{e(n[5])}</p><dl>'+''.join(f'<dt>{e(k)}</dt><dd>{e(v)}</dd>' for k,v in n[6])+'</dl></section>' for n in NODES)}</details>
   <footer class="arch-footer"><span>Architecture documented in the geodata repository</span><a href="https://github.com/BenjaminHenriksson/geodata-mcp" target="_blank" rel="noopener noreferrer">Repository</a><a href="/docs">Viewer API reference</a></footer>
-</div><script src="/static/architecture/architecture.js?v=1" defer></script>'''
+</div><script src="/static/architecture/architecture.js?v=2" defer></script>'''
     return ui.document("Architecture", body, principal, csrf, "architecture")

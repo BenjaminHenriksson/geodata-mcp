@@ -54,7 +54,7 @@ def test_architecture_requires_login_and_preserves_csp(monkeypatch, principal):
     assert 'href="/architecture" aria-current="page"' in response.text
     page = Page(response.text)
     assert len(page.ids) == len(set(page.ids))
-    assert page.scripts == ["/static/architecture/architecture.js?v=1"]
+    assert page.scripts == ["/static/architecture/architecture.js?v=2"]
     assert not page.handlers
     assert 'lang="en"' in response.text
 

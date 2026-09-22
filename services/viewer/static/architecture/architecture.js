@@ -123,7 +123,14 @@
     viewport.scrollTo({left: 0, top: 0});
   }
 
-  nodes.forEach(node => node.addEventListener('click', () => selectNode(node.dataset.node)));
+  nodes.forEach(node => node.addEventListener('click', () => {
+    selectNode(node.dataset.node);
+    if (window.matchMedia('(max-width:1080px)').matches) $('component-detail').scrollIntoView({block: 'start'});
+  }));
+  $('back-to-diagram').addEventListener('click', () => {
+    root.querySelector('.diagram-toolbar').scrollIntoView({block: 'start'});
+    if (selected) byId.get(selected).focus({preventScroll: true});
+  });
   flowButtons.forEach(button => button.addEventListener('click', () => selectFlow(button.dataset.flow)));
   $('clear-selection').addEventListener('click', () => selectNode(null));
   $('previous-step').addEventListener('click', () => showStep(step - 1));
