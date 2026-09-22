@@ -15,7 +15,7 @@
 .imagery-panorama-tools [hidden]{display:none}
 /* Street-view mode retains the live 3D map as a separate bottom-left inset. */
 .map-stage.imagery-mode #map{inset:auto;left:12px;bottom:12px;width:30%;max-width:320px;min-width:180px;height:220px;max-height:30%;z-index:10;border:2px solid white;border-radius:8px;overflow:hidden;box-shadow:0 3px 16px #0006}
-.imagery-mode #map .imagery-navigation,.imagery-mode #map .imagery-controls,.imagery-mode #map .maplibregl-ctrl-bottom-right,.imagery-mode #map .maplibregl-ctrl-bottom-left{display:none}
+.imagery-mode #map .imagery-navigation,.imagery-mode #map .imagery-controls{display:none}
 .map-stage.imagery-mode #inspector,.map-stage.imagery-mode #legend,.map-stage.imagery-mode .trace-toggle{display:none!important}
 .imagery-mode .imagery-panorama-tools{padding-left:min(35%,350px);min-height:50px}
 .map-stage.imagery-mode #trace-panel{top:12px;bottom:250px}

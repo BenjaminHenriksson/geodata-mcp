@@ -1,4 +1,4 @@
-import {activeSites, routeFeatures, stockholmView, SUNDSVALL_OVERVIEW} from './policy.js';
+import {activeSites, routeFeatures, stockholmView, SUNDSVALL_OVERVIEW} from './policy.js?v=20260922-navigation';
 import {createPanorama} from './panorama.js';
 
 export async function attachImagery(map, viewId) {
