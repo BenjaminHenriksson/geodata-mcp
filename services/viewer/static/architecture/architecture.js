@@ -4,6 +4,8 @@
   const root = document.querySelector('.architecture');
   if (!root) return;
   const flows = JSON.parse(root.dataset.flows);
+  const ui = JSON.parse(root.dataset.ui);
+  const languageLinks = [...root.querySelectorAll('[data-language]')];
   const nodes = [...root.querySelectorAll('[data-node]')];
   const edges = [...root.querySelectorAll('.diagram-edges g > path')];
   const byId = new Map(nodes.map(node => [node.dataset.node, node]));
@@ -39,8 +41,8 @@
       node.classList.toggle('is-current', !selected && currentNodes.has(id));
       node.classList.toggle('is-dim', selected ? id !== selected && !relatedNodes.has(id) : flow !== 'overview' && !flowNodes.has(id));
     });
-    $('diagram-caption').textContent = selected ? byId.get(selected).querySelector('strong').textContent + ' and its connections'
-      : flow === 'overview' ? 'Select a component to explore it' : flows[flow].description;
+    $('diagram-caption').textContent = selected ? byId.get(selected).querySelector('strong').textContent + ui.related
+      : flow === 'overview' ? ui.caption : flows[flow].description;
   }
 
   function selectNode(id, updateHash = true) {
@@ -58,7 +60,7 @@
     selectNode(null, false);
     $('step-title').textContent = steps[step].title;
     $('step-text').textContent = steps[step].text;
-    $('step-count').textContent = `Step ${step + 1} of ${steps.length}`;
+    $('step-count').textContent = `${ui.step} ${step + 1} ${ui.of} ${steps.length}`;
     $('previous-step').disabled = step === 0;
     $('next-step').disabled = step === steps.length - 1;
     $('flow-steps').querySelectorAll('button').forEach((button, i) => button.setAttribute('aria-pressed', String(i === step)));
@@ -78,7 +80,7 @@
       flows[flow].steps.forEach((item, i) => {
         const button = document.createElement('button');
         button.textContent = String(i + 1);
-        button.setAttribute('aria-label', `Step ${i + 1}: ${item.title}`);
+        button.setAttribute('aria-label', `${ui.step} ${i + 1}: ${item.title}`);
         button.title = item.title;
         button.addEventListener('click', () => showStep(i));
         $('flow-steps').append(button);
@@ -95,9 +97,17 @@
     if (selected) params.set('node', selected);
     const hash = params.toString();
     history.replaceState(null, '', location.pathname + location.search + (hash ? '#' + hash : ''));
+    updateLanguageLinks();
+  }
+
+  function updateLanguageLinks() {
+    languageLinks.forEach(link => {
+      link.href = '/architecture?lang=' + link.dataset.language + location.hash;
+    });
   }
 
   function readHash() {
+    updateLanguageLinks();
     // Leave ordinary in-page anchors alone.
     if (location.hash && !location.hash.includes('=')) return;
     const params = new URLSearchParams(location.hash.slice(1));

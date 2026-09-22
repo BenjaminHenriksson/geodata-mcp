@@ -297,12 +297,12 @@ def _dashboard_response(body):
 @app.get("/architecture", response_class=HTMLResponse, tags=["manager"],
          summary="Interactive system architecture", dependencies=api.MANAGER_AUTH,
          responses={**api.MANAGER_DISABLED, **api.REDIRECT_LOGIN})
-def architecture(request: Request):
+def architecture(request: Request, lang: str = Query("sv", pattern="^(sv|en)$")):
     principal = _dashboard_principal(request)
     if principal is None:
         return RedirectResponse("/login", status_code=302)
     return _dashboard_response(architecture_page.render(
-        principal, viewer_auth.csrf_token(principal["id"])))
+        principal, viewer_auth.csrf_token(principal["id"]), lang=lang))
 
 
 @app.get("/dashboard", response_class=HTMLResponse, tags=["manager"],

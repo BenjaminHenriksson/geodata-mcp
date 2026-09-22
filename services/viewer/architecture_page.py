@@ -6,6 +6,8 @@ alongside the implementation; it contains no credentials or live inventory.
 import json
 
 import ui
+import architecture_copy as copy
+import architecture_sv as sv
 
 e = ui.e
 
@@ -172,93 +174,108 @@ TOOLS = [("workspace", "Choose and manage owned workspaces"), ("search", "Find c
          ("analyze", "Queue Gemma or SAM3 change detection"), ("export", "Build or retrieve a GIS download")]
 
 
-def render(principal, csrf):
+def content(lang):
+    if lang == "en":
+        return NODES, EDGES, FLOWS, TOOLS
+    if lang != "sv":
+        raise ValueError("unsupported architecture language")
+    nodes = [(*node[:3], *sv.NODES[node[0]], node[-1]) for node in NODES]
+    edges = [(key, start, end, sv.EDGES[key], path) for key, start, end, _, path in EDGES]
+    flows = {key: (sv.FLOWS[key][0], sv.FLOWS[key][1], [
+        (*translated, original[2])
+        for translated, original in zip(sv.FLOWS[key][2], value[2], strict=True)
+    ]) for key, value in FLOWS.items()}
+    return nodes, edges, flows, [(key, sv.TOOLS[key]) for key, _ in TOOLS]
+
+
+def render(principal, csrf, lang="sv"):
+    content_nodes, content_edges, content_flows, content_tools = content(lang)
+    def text(key):
+        return copy.TEXT[key][lang == "en"]
+    def t(key):
+        return e(text(key))
     nodes, details = [], []
-    for ident, (x, y), kind, name, subtitle, description, facts, source in NODES:
+    for ident, (x, y), kind, name, subtitle, description, facts, source in content_nodes:
         nodes.append(f'<button class="arch-node kind-{kind}" id="node-{ident}" data-node="{ident}" '
                      f'style="left:{x}px;top:{y}px" aria-pressed="false" aria-controls="component-detail">'
                      f'<span class="node-mark" aria-hidden="true"></span><strong>{e(name)}</strong><span>{e(subtitle)}</span></button>')
         source_link = (f'<a class="source-link" href="https://github.com/BenjaminHenriksson/geodata-mcp/blob/main/{source}" '
-                       f'target="_blank" rel="noopener noreferrer">Source: {e(source)}</a>' if source else '')
+                       f'target="_blank" rel="noopener noreferrer">{t("code_source")}: {e(source)}</a>' if source else '')
+        kind_key = {"client": "client", "service": "host_service", "data": "data", "model": "model", "external": "external_service"}[kind]
         details.append(f'<article id="detail-{ident}" class="component-detail" hidden><span class="detail-kind">'
-                       f'{e({"client":"Client", "service":"Workstation service", "data":"Persistent state", "model":"Model", "external":"External service"}[kind])}</span>'
-                       f'<h2>{e(name)}</h2><p>{e(description)}</p><dl>' +
+                       f'{t(kind_key)}</span><h2>{e(name)}</h2><p>{e(description)}</p><dl>' +
                        ''.join(f'<dt>{e(label)}</dt><dd>{e(value)}</dd>' for label, value in facts) +
-                       f'</dl>{source_link}<h3>Connections</h3><ul class="connection-list" data-connections="{ident}"></ul></article>')
+                       f'</dl>{source_link}<h3>{t("connections")}</h3><ul class="connection-list" data-connections="{ident}"></ul></article>')
     paths = ''.join(f'<path id="edge-{ident}" data-from="{start}" data-to="{end}" data-label="{e(label)}" '
                     f'd="{path}" marker-end="url(#arrow)"><title>{e(label)}</title></path>'
-                    for ident, start, end, label, path in EDGES)
-    flow_buttons = ''.join(f'<button data-flow="{key}" aria-pressed="false">{e(value[0])}</button>' for key, value in FLOWS.items())
+                    for ident, start, end, label, path in content_edges)
+    flow_buttons = ''.join(f'<button data-flow="{key}" aria-pressed="false">{e(value[0])}</button>' for key, value in content_flows.items())
     flow_data = {key: {"title": title, "description": desc, "steps": [
         {"title": title, "text": text, "edges": edges} for title, text, edges in steps]}
-        for key, (title, desc, steps) in FLOWS.items()}
-    body = f'''<link rel="stylesheet" href="/static/architecture/architecture.css?v=2">
-<div class="architecture" lang="en" data-flows="{e(json.dumps(flow_data))}">
-  <header class="arch-heading"><div><p class="arch-context">Architecture / Govtech4all pilot</p>
-  <h1>How a question becomes a map.</h1><p>Eneo brings the conversation. Geodata MCP turns it into data, analysis and maps.
-  Explore the components or follow a request through the workstation.</p></div>
-  <a class="arch-jump" href="#architecture-notes">Data, access &amp; limits</a></header>
+        for key, (title, desc, steps) in content_flows.items()}
+    messages = {key: text(key) for key in ("caption", "related", "step", "of")}
+    languages = ''.join(f'<a href="/architecture?lang={code}" lang="{code}" hreflang="{code}" data-language="{code}"'
+                        + (' aria-current="page"' if code == lang else '') + f'>{name}</a>'
+                        for code, name in (("sv", "Svenska"), ("en", "English")))
+    storage = ''.join(f'<tr><th scope="row">{title}</th><td>{contents}</td><td>{lifetime}</td></tr>'
+                      for title, contents, lifetime in copy.STORAGE[lang])
+    boundaries = ''.join(f'<div><h2>{e(title)}</h2><p>{first}</p><p>{second}</p></div>'
+                         for title, first, second in copy.BOUNDARIES[lang])
+    body = f'''<link rel="stylesheet" href="/static/architecture/architecture.css?v=3">
+<div class="architecture" lang="{lang}" data-flows="{e(json.dumps(flow_data))}" data-ui="{e(json.dumps(messages))}">
+  <header class="arch-heading"><div><p class="arch-context">{t('context')}</p>
+  <h1>{t('heading')}</h1><p>{t('intro')}</p></div>
+  <div class="arch-actions"><nav class="arch-language" aria-label="{t('language')}">{languages}</nav>
+  <a class="arch-jump" href="#architecture-notes">{t('notes')}</a></div></header>
   <div class="arch-explorer">
-    <div class="flow-picker" role="group" aria-label="Trace a system flow">
-      <button data-flow="overview" aria-pressed="true">Full architecture</button>{flow_buttons}
+    <div class="flow-picker" role="group" aria-label="{t('trace')}">
+      <button data-flow="overview" aria-pressed="true">{t('overview')}</button>{flow_buttons}
     </div>
     <div class="explorer-body">
       <div class="diagram-column">
-        <div class="diagram-toolbar"><span id="diagram-caption">Select a component to explore it</span>
-          <div class="zoom-controls" role="group" aria-label="Diagram zoom">
-            <button id="zoom-out" aria-label="Zoom out">−</button><output id="zoom-value" aria-live="polite">Fit</output>
-            <button id="zoom-in" aria-label="Zoom in">+</button><button id="zoom-fit">Fit</button>
+        <div class="diagram-toolbar"><span id="diagram-caption">{t('caption')}</span>
+          <div class="zoom-controls" role="group" aria-label="{t('zoom')}">
+            <button id="zoom-out" aria-label="{t('zoom_out')}">−</button><output id="zoom-value" aria-live="polite">{t('fit')}</output>
+            <button id="zoom-in" aria-label="{t('zoom_in')}">+</button><button id="zoom-fit">{t('fit')}</button>
           </div></div>
-        <div class="diagram-viewport" tabindex="0" role="region" aria-label="Interactive system architecture. Tab to select a component; use zoom controls to enlarge.">
+        <div class="diagram-viewport" tabindex="0" role="region" aria-label="{t('diagram')}">
           <div class="diagram-size"><div class="diagram-stage">
-            <div class="arch-zone client-zone"><strong>Your device</strong></div>
-            <div class="arch-zone workstation-zone"><strong>5090 workstation</strong><span>Reachable over the tailnet</span></div>
-            <div class="arch-zone external-zone"><strong>External services</strong><span>Outbound requests</span></div>
+            <div class="arch-zone client-zone"><strong>{t('device')}</strong></div>
+            <div class="arch-zone workstation-zone"><strong>{t('workstation')}</strong><span>{t('tailnet')}</span></div>
+            <div class="arch-zone external-zone"><strong>{t('external')}</strong><span>{t('outbound')}</span></div>
             <svg class="diagram-edges" viewBox="0 0 1180 780" aria-hidden="true">
               <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z"/></marker></defs>
               <g>{paths}</g></svg>{''.join(nodes)}
-            <p class="diagram-note">Arrows show logical requests and data paths. Responses return on the same connection.</p>
+            <p class="diagram-note">{t('arrows')}</p>
           </div></div>
         </div>
-        <div class="diagram-legend"><span><i class="legend-service"></i>Service</span><span><i class="legend-data"></i>Persistent state</span>
-          <span><i class="legend-model"></i>Model</span><span><i class="legend-external"></i>External source</span>
-          <button id="clear-selection">Clear selection</button></div>
+        <div class="diagram-legend"><span><i class="legend-service"></i>{t('service')}</span><span><i class="legend-data"></i>{t('data')}</span>
+          <span><i class="legend-model"></i>{t('model')}</span><span><i class="legend-external"></i>{t('source')}</span>
+          <button id="clear-selection">{t('clear')}</button></div>
         <div id="flow-walkthrough" hidden><div class="walk-heading"><h2 id="flow-title"></h2><span id="step-count" aria-live="polite"></span></div>
-          <div id="flow-steps" role="group" aria-label="Flow steps"></div>
+          <div id="flow-steps" role="group" aria-label="{t('flow_steps')}"></div>
           <div class="walk-copy" aria-live="polite"><h3 id="step-title"></h3><p id="step-text"></p></div>
-          <div class="walk-controls"><button id="previous-step">Previous step</button><button id="next-step">Next step</button></div>
+          <div class="walk-controls"><button id="previous-step">{t('previous')}</button><button id="next-step">{t('next')}</button></div>
         </div>
       </div>
-      <aside id="component-detail" aria-label="Component details" aria-live="polite">
-        <button id="back-to-diagram">Back to diagram</button>
-        <div id="detail-intro"><span class="detail-kind">A guide to the system</span><h2>One conversation.<br>Several distinct systems.</h2>
-          <p>Click any component to see its responsibilities, stored data and connections.</p>
-          <div class="intro-note"><h3>Gemma is the default</h3><p>Chat and change detection both use the paid external model, through separate calls. SAM3 remains a local option.</p></div>
-          <div class="intro-note"><h3>Data survives the chat</h3><p>Workspace layers, jobs, maps and exports are persisted on the workstation.</p></div>
-          <p class="snapshot-note">Deployment guide reviewed 22 September 2026. This diagram explains the design; it is not a live health display.</p>
+      <aside id="component-detail" aria-label="{t('component')}" aria-live="polite">
+        <button id="back-to-diagram">{t('back')}</button>
+        <div id="detail-intro"><span class="detail-kind">{t('guide')}</span><h2>{t('one')}<br>{t('several')}</h2>
+          <p>{t('select')}</p>
+          <div class="intro-note"><h3>{t('default')}</h3><p>{t('default_detail')}</p></div>
+          <div class="intro-note"><h3>{t('persist')}</h3><p>{t('persist_detail')}</p></div>
+          <p class="snapshot-note">{t('reviewed')}</p>
         </div>{''.join(details)}
       </aside>
     </div>
   </div>
-  <noscript><p>The diagram needs JavaScript for selection and flow tracing. The complete component reference is available below.</p><style>.component-reference{{display:block!important}}</style></noscript>
-  <section class="architecture-notes" id="architecture-notes"><div class="notes-heading"><h2>What is stored, and where?</h2><p>The model’s context window is not the system’s database.</p></div>
-    <div class="arch-table-wrap"><table><thead><tr><th scope="col">Store</th><th scope="col">Contents</th><th scope="col">Lifetime / ownership</th></tr></thead><tbody>
-    <tr><th scope="row">Geodata PostgreSQL</th><td><code>catalog</code> metadata; <code>ref</code> shared source layers; <code>doc</code> document passages.</td><td>Persisted in the database volume; shared source data is distinct from workspace results.</td></tr>
-    <tr><th scope="row">Workspace schemas</th><td><code>ws_*</code> derived layers, change candidates and coverage.</td><td>A geodata credential owns named workspaces. Explicit <code>workspace_id</code> isolates concurrent conversations without switching the shared default.</td></tr>
-    <tr><th scope="row">Geodata <code>app</code> schema</th><td>Jobs, map specs, layer metadata, API-key records, SQL/MCP audit and provenance.</td><td>Maps reference persisted layers. Provenance records how outputs were produced.</td></tr>
-    <tr><th scope="row">Eneo PostgreSQL + Redis</th><td>Conversation/application state and Eneo background processing.</td><td>Separate application stores; neither is the geodata analysis queue.</td></tr>
-    <tr><th scope="row">MinIO + model cache</th><td>GIS exports and citation sidecars in MinIO; downloaded embedding weights in the worker cache.</td><td>Persistent volumes. Export links expire after 24 hours and can be refreshed.</td></tr>
-    </tbody></table></div>
+  <noscript><p>{t('noscript')}</p><style>.component-reference{{display:block!important}}</style></noscript>
+  <section class="architecture-notes" id="architecture-notes"><div class="notes-heading"><h2>{t('stored')}</h2><p>{t('context_note')}</p></div>
+    <div class="arch-table-wrap"><table><thead><tr><th scope="col">{t('store')}</th><th scope="col">{t('contents')}</th><th scope="col">{t('lifetime')}</th></tr></thead><tbody>{storage}</tbody></table></div>
   </section>
-  <section class="tool-reference"><h2>Eight tools, one workspace context</h2><dl>{''.join(f'<div><dt><code>{name}</code></dt><dd>{text}</dd></div>' for name, text in TOOLS)}</dl></section>
-  <section class="boundary-notes"><div><h2>Access is layered</h2><p>Tailscale controls reachability. Eneo has its own login. MCP checks bearer credentials or OAuth, and the dashboard checks a signed cookie. Map links are capabilities: anyone who can reach the site and has the link can view its included layers.</p>
-    <p>The current Eneo connection uses a shared geodata credential. A workspace is therefore not automatically one-to-one with an Eneo user. Names such as <code>default</code> and <code>govtech4all</code> are workspace labels, not user identities.</p></div>
-    <div><h2>Local does not mean offline</h2><p>The services and geodata stores run on the workstation. Eneo sends model context externally; Gemma change detection sends crop pairs externally; internet search sends search queries. Sources and basemaps also require outbound access.</p>
-    <p>SAM3 inference and catalog embeddings run locally. Upstream credentials stay server-side. This page contains no keys or passwords.</p></div>
-    <div><h2>Concurrency has two levels</h2><p>Multiple people can chat and read maps at the same time. The single geodata worker processes queued jobs one at a time, while a Gemma analysis can run four crop requests concurrently.</p>
-    <p>Adding worker replicas needs a job-lease and recovery change first. Change detection is capped at 2 km² per request and 128 image windows; use smaller areas for detailed work. Candidate counts are not verified building counts.</p></div>
-  </section>
-  <details class="component-reference"><summary>Complete component reference</summary>{''.join(f'<section><h3>{e(n[3])}</h3><p>{e(n[5])}</p><dl>'+''.join(f'<dt>{e(k)}</dt><dd>{e(v)}</dd>' for k,v in n[6])+'</dl></section>' for n in NODES)}</details>
-  <footer class="arch-footer"><span>Architecture documented in the geodata repository</span><a href="https://github.com/BenjaminHenriksson/geodata-mcp" target="_blank" rel="noopener noreferrer">Repository</a><a href="/docs">Viewer API reference</a></footer>
-</div><script src="/static/architecture/architecture.js?v=2" defer></script>'''
-    return ui.document("Architecture", body, principal, csrf, "architecture")
+  <section class="tool-reference"><h2>{t('eight_tools')}</h2><dl>{''.join(f'<div><dt><code>{name}</code></dt><dd>{e(text)}</dd></div>' for name, text in content_tools)}</dl></section>
+  <section class="boundary-notes">{boundaries}</section>
+  <details class="component-reference"><summary>{t('reference')}</summary>{''.join(f'<section><h3>{e(n[3])}</h3><p>{e(n[5])}</p><dl>'+''.join(f'<dt>{e(k)}</dt><dd>{e(v)}</dd>' for k,v in n[6])+'</dl></section>' for n in content_nodes)}</details>
+  <footer class="arch-footer"><span>{t('documented')}</span><a href="https://github.com/BenjaminHenriksson/geodata-mcp" target="_blank" rel="noopener noreferrer">{t('repository')}</a><a href="/docs">{t('api')}</a></footer>
+</div><script src="/static/architecture/architecture.js?v=3" defer></script>'''
+    return ui.document(text("title"), body, principal, csrf, "architecture", lang=lang)

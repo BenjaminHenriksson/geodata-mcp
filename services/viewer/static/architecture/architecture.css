@@ -5,6 +5,10 @@
 .architecture h1{font-size:clamp(29px,3vw,43px);font-weight:650;letter-spacing:-1.2px;line-height:1.15}
 .architecture .arch-heading p:last-child{max-width:70ch;font-size:15px;margin:14px 0 0;line-height:1.65}
 .arch-jump{flex-shrink:0;font-size:13px;margin-bottom:4px}
+.arch-actions{display:flex;flex-direction:column;align-items:flex-end;gap:18px;flex-shrink:0}
+.arch-language{display:flex;gap:2px;padding:3px;border:1px solid #c5d6e1;border-radius:6px;background:white}
+.architecture .arch-language a{padding:5px 11px;border-radius:3px;font-size:13px;text-decoration:none}
+.architecture .arch-language a[aria-current=page]{background:#173f58;color:white;font-weight:600}
 .arch-explorer{border:1px solid #c5d6e1;background:#fff;border-radius:10px;overflow:hidden}
 .flow-picker{display:flex;gap:6px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line);background:#edf3f7}
 .architecture .flow-picker button{border-color:transparent;background:transparent;font-size:13px;padding:8px 11px;border-radius:5px}
@@ -109,6 +113,7 @@
 #detail-intro{display:grid;grid-template-columns:1fr 1fr;gap:0 26px}#detail-intro .detail-kind,#detail-intro>h2,#detail-intro>.snapshot-note{grid-column:1/-1}
 .intro-note{margin:0;padding-top:0;border:0}.diagram-viewport{height:580px}.boundary-notes{gap:20px}}
 @media(max-width:680px){.app-main:has(.architecture){padding:24px 12px}.arch-heading{display:block;margin-bottom:22px}.architecture h1{font-size:31px;letter-spacing:-.8px}
+.arch-actions{align-items:flex-start;margin-top:16px;gap:4px}
 .arch-jump{display:inline-block;margin-top:12px}.flow-picker{flex-wrap:nowrap;overflow:auto;padding:10px;gap:4px}.architecture .flow-picker button{white-space:nowrap}
 .diagram-toolbar{padding:10px;align-items:flex-start}#diagram-caption{max-width:21ch}.diagram-viewport{height:420px}
 .diagram-legend{gap:10px;padding:10px}#component-detail{padding:22px}#detail-intro{display:block}.intro-note{margin-top:20px}

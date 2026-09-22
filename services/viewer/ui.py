@@ -146,16 +146,16 @@ def header(principal=None, csrf="", active=""):
         account = '' if active == "login" else '<a href="/login">Logga in</a>'
     navigation = (f'<nav class="app-nav" aria-label="Huvudnavigation">{nav}</nav>'
                   if active != "login" else "")
-    return ('<header class="app-header"><div class="app-bar">'
+    return ('<header class="app-header" lang="sv"><div class="app-bar">'
             '<a class="brand" href="/dashboard">Geodata MCP</a>'
             f'{navigation}<div class="account">{account}</div></div></header>')
 
 
 
-def document(title, body, principal=None, csrf="", active=""):
-    return f"""<!doctype html><html lang="sv"><head><meta charset="utf-8">
+def document(title, body, principal=None, csrf="", active="", *, lang="sv"):
+    return f"""<!doctype html><html lang="{e(lang)}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} – Geodata MCP</title>
-<style>{CSS}</style></head><body class="app-page"><a class="skip-link" href="#main">Hoppa till innehåll</a>
+<style>{CSS}</style></head><body class="app-page"><a class="skip-link" href="#main">{'Skip to content' if lang == 'en' else 'Hoppa till innehåll'}</a>
 {header(principal, csrf, active)}<main class="app-main" id="main">{body}</main></body></html>"""
 
 
