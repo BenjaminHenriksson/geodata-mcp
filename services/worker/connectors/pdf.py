@@ -1,7 +1,6 @@
 """PDF ingestion: download → native text/tables or Gemma OCR per page → chunk →
 doc.documents + doc.chunks → embed chunks with the local model."""
 
-import bisect
 import logging
 import os
 
@@ -19,42 +18,26 @@ MIN_TEXT_CHARS = 200
 
 
 def _chunk_pages(pages, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    """Chunk the concatenated page texts (~size chars, overlap, split at
-    whitespace). Returns [(page_no, chunk_text)] with the page holding each
-    chunk's start offset."""
-    page_starts = []
-    page_numbers = []
-    parts = []
-    pos = 0
-    for number, text in pages:
-        if not text:
-            continue
-        page_starts.append(pos)
-        page_numbers.append(number)
-        parts.append(text)
-        pos += len(text) + 2  # the "\n\n" joiner
-    joined = "\n\n".join(parts)
-
+    """Split at whitespace with overlap, keeping each chunk on its cited page."""
     chunks = []
-    start = 0
-    total = len(joined)
-    while start < total:
-        end = min(start + size, total)
-        cut = end
-        if end < total:
-            window = joined[start:end]
-            split_at = max(window.rfind(" "), window.rfind("\n"), window.rfind("\t"))
-            if split_at > size // 2:
-                cut = start + split_at
-        piece = joined[start:cut].strip()
-        if piece:
-            idx = bisect.bisect_right(page_starts, start) - 1
-            page_no = page_numbers[idx] if idx >= 0 else None
-            chunks.append((page_no, piece))
-        if cut >= total:
-            break
-        next_start = cut - overlap
-        start = next_start if next_start > start else cut
+    for number, text in pages:
+        start = 0
+        total = len(text)
+        while start < total:
+            end = min(start + size, total)
+            cut = end
+            if end < total:
+                window = text[start:end]
+                split_at = max(window.rfind(" "), window.rfind("\n"), window.rfind("\t"))
+                if split_at > size // 2:
+                    cut = start + split_at
+            piece = text[start:cut].strip()
+            if piece:
+                chunks.append((number, piece))
+            if cut >= total:
+                break
+            next_start = cut - overlap
+            start = next_start if next_start > start else cut
     return chunks
 
 

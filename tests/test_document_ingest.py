@@ -7,6 +7,39 @@ import embedder
 from connectors import pdf, textdoc
 
 
+def test_pdf_chunks_never_join_pages_or_renumber_after_blank_pages():
+    pages = [(2, "Only the outer row of plots may have a 45 degree roof."),
+             (3, " \n\t"), (4, "Building height is limited to 3.6 metres.")]
+    assert pdf._chunk_pages(pages) == [(2, pages[0][1]), (4, pages[2][1])]
+
+
+def test_long_pdf_pages_keep_all_text_and_overlap_only_within_each_page():
+    pages = {2: " ".join(f"roof{i:04d}" for i in range(350)),
+             4: " ".join(f"height{i:04d}" for i in range(350))}
+    chunks = pdf._chunk_pages(pages.items())
+    for number, source in pages.items():
+        covered = set()
+        previous_end = None
+        selected = [text for page, text in chunks if page == number]
+        assert len(selected) > 1
+        for text in selected:
+            assert text in source  # No text or overlap borrowed from another page.
+            assert len(text) <= pdf.CHUNK_SIZE
+            start = source.index(text)
+            if previous_end is not None:
+                assert start < previous_end
+            previous_end = start + len(text)
+            covered.update(range(start, previous_end))
+        assert all(i in covered for i, char in enumerate(source) if not char.isspace())
+
+
+def test_unpaged_web_text_still_chunks_without_page_numbers():
+    text = "Website content. " * 200
+    chunks = pdf._chunk_pages([(None, text)])
+    assert len(chunks) > 1
+    assert all(page is None and chunk in text for page, chunk in chunks)
+
+
 @pytest.fixture
 def document_db():
     conn = MagicMock()

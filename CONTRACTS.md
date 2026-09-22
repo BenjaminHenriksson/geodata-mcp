@@ -232,7 +232,8 @@ Single Python process, two responsibilities:
      driver (`OAPIF:<url>`, `OGR_OAPIF_PAGE_SIZE 1000`).
    - `ingest_file {path|url, table_name, target_schema}` — same via ogr2ogr from GDAL-readable file.
    - `ingest_pdf {dataset_id|url, title}` — download, native PDF text/tables with Gemma OCR
-     for pages with fewer than 200 extracted characters, ~1200-char chunks with 150 overlap,
+     for pages with fewer than 200 extracted characters, ~1200-char chunks with 150 overlap
+     within each page (chunks never cross PDF pages, so page citations match their text),
      insert doc.documents + doc.chunks, embed chunks (task `document`). Store OCR page numbers,
      empty pages, uncertainties and model usage in document metadata. OCR failures fail the
      job; documents without any readable text are not indexed. Shared extraction with inspect.
