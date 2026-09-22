@@ -12,7 +12,7 @@ import dbq
 DETAIL_KEYS = frozenset({
     "backend", "method", "geometry_kind", "concepts", "threshold", "min_area_m2",
     "proc_gsd", "wms_gsd", "collections", "source_kinds", "season_note", "tile_counts",
-    "model", "name", "detail", "max_output_tokens", "requests", "request_attempts",
+    "model", "detail", "max_output_tokens", "requests", "request_attempts",
     "concurrency", "elapsed_seconds", "tile_failures", "complete", "reconciliation",
     "raw_candidates", "candidates", "reported_usage_only", "usage_cumulative",
     "prompt_tokens", "completion_tokens", "cost", "image_token_budget",
@@ -75,7 +75,8 @@ def _clean(value, keys=DETAIL_KEYS, depth=0):
         return None
     if isinstance(value, dict):
         return {k: _clean(v, keys, depth + 1) for k, v in value.items()
-                if k in keys and v is not None}
+                if k in keys and v is not None
+                and (k != "model" or isinstance(v, dict))}
     if isinstance(value, list):
         return [_clean(v, keys, depth + 1) for v in value[:100]]
     if isinstance(value, str):

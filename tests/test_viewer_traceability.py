@@ -165,3 +165,22 @@ def test_review_flag_and_conflicts_are_allowlisted_without_promoting_confidence(
 def test_public_document_identifiers_survive_without_access_tokens():
     assert traceability.safe_url("https://source.test/download?documentId=42&version=2&token=SECRET#page=7") == (
         "https://source.test/download?documentId=42&version=2#page=7")
+
+
+
+def test_public_processing_details_omit_runtime_model_identifiers():
+    data = traceability.clean_details({
+        "backend": "vision",
+        "model": {"name": "route-family/model-revision", "model": "private-route-id",
+                  "base_url": "https://inference.invalid/api", "complete": True,
+                  "usage_cumulative": {"prompt_tokens": 20, "completion_tokens": 10}},
+        "source_sha256": "source-digest",
+    })
+    assert data == {
+        "backend": "vision",
+        "model": {"complete": True,
+                  "usage_cumulative": {"prompt_tokens": 20, "completion_tokens": 10}},
+        "source_sha256": "source-digest",
+    }
+    assert traceability.clean_details({"model": "route-family/model-revision"}) == {}
+    assert traceability.feature_details({"name": "Building A"}) == {"name": "Building A"}
