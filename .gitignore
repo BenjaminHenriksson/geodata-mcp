@@ -11,3 +11,4 @@ dist/
 services/viewer/static/imagery-build/
 services/viewer/static/maplibre-gl.js
 services/viewer/static/maplibre-gl.css
+.evaluation/

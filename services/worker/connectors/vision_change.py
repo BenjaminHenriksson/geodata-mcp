@@ -7,9 +7,11 @@ Only HTTP inference runs in threads; imagery/GDAL stays on the caller's thread.
 import base64
 import json
 import math
+import threading
+import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
-from connectors import vision_api
+from connectors import change_boxes, vision_api
 
 import httpx
 
@@ -22,7 +24,8 @@ CHANGE_CLASSES = {
 }
 WARNING = ("Vision returns approximate review bounding boxes, not segmented footprints. "
            "area_m2 is box area; confidence_label is uncalibrated model judgement. "
-           "Overlapping tiles may repeat a detection. Inspect imagery before using results.")
+           "Cross-tile matches are conservative and ambiguous boxes can remain duplicated. "
+           "Inspect imagery before using results; repeated agreement is not calibrated confidence.")
 
 
 def settings():
@@ -117,48 +120,137 @@ def candidate_rows(window, changes):
     return rows
 
 
-def infer(client, pairs, concepts, collections, statuses, config):
+class _RetryGate:
+    """One cooldown shared by all threads after a rate-limit response."""
+
+    def __init__(self, cancel):
+        self.cancel, self.lock, self.until = cancel, threading.Lock(), 0.0
+
+    def defer(self, seconds):
+        with self.lock:
+            self.until = max(self.until, time.monotonic() + seconds)
+
+    def wait(self):
+        while not self.cancel.is_set():
+            with self.lock:
+                delay = self.until - time.monotonic()
+            if delay <= 0:
+                return True
+            self.cancel.wait(delay)
+        return False
+
+
+def _tile_call(client, key, pngs, concepts, collections, window, gate):
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "cost": 0}
+    failure, attempts = "cancelled", 0
+    started = time.monotonic()
+    for attempt in range(3):
+        if not gate.wait():
+            break
+        attempts += 1
+        try:
+            changes, tokens = detect(client, key, pngs, concepts, collections, window)
+            for name in usage:
+                usage[name] += tokens.get(name, 0) or 0
+            # Malformed output is visible as a failure, not repeatedly purchased
+            # until a convenient answer arrives.
+            failure = "invalid_output" if changes is None else None
+            return changes, usage, attempts, failure, time.monotonic() - started
+        except vision_api.EndpointError as exc:
+            failure = f"http_{exc.status_code}"
+            if exc.status_code in (400, 401, 403, 404):
+                gate.cancel.set()
+                break
+            if exc.status_code not in (408, 429, 500, 502, 503, 504):
+                break
+            delay = exc.retry_after if exc.retry_after is not None else 2 ** attempt
+            # Do not shorten the server's Retry-After or hold a worker forever.
+            # A longer cooldown is reported for an explicit later retry.
+            if not math.isfinite(delay) or delay > 60:
+                gate.cancel.set()
+                failure += "_retry_deferred"
+                break
+            gate.defer(delay)
+        except httpx.TransportError as exc:
+            failure = "stream_deadline" if isinstance(exc, vision_api.StreamDeadline) else "transport_error"
+            if attempt < 2:
+                gate.defer(2 ** attempt)
+        except (RuntimeError, ValueError):
+            failure = "invalid_response"
+            break
+    return None, usage, attempts, failure, time.monotonic() - started
+
+
+def infer(client, pairs, concepts, collections, statuses, config, *, cancel=None, progress=None):
     """Consume the GDAL reader on the main thread; bound queued images to concurrency."""
     key, concurrency = config
     rows = []
     requests = 0
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "cost": 0}
     pending = {}
+    windows, failures, timings = [], {}, {}
+    attempted = 0
+    started = time.monotonic()
+    gate = _RetryGate(cancel or threading.Event())
 
     def collect(done):
-        nonlocal requests
+        nonlocal requests, attempted
         for future in done:
             window = pending.pop(future)
-            try:
-                changes, tokens = future.result()
-            except ValueError:
-                statuses[window["tile_id"]] = "error"
-                continue
-            requests += 1
+            changes, tokens, tries, failure, elapsed = future.result()
+            attempted += tries
+            requests += int(tries > 0)
+            timings[window["tile_id"]] = round(elapsed, 3)
             for name in usage:
                 usage[name] += tokens.get(name, 0) or 0
+            if progress is not None:
+                progress({"tile_id": window["tile_id"], "changes": changes, "usage": tokens,
+                          "attempts": tries, "failure": failure, "seconds": round(elapsed, 3)})
             if changes is None:
-                statuses[window["tile_id"]] = "error"
+                statuses[window["tile_id"]] = "cancelled" if failure == "cancelled" else "error"
+                failures[window["tile_id"]] = {"reason": failure, "attempts": tries}
                 continue
             rows.extend(candidate_rows(window, changes))
             statuses[window["tile_id"]] = "analyzed"
 
-    try:
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        try:
             for window, pngs in pairs:
+                windows.append(window)
                 if len(pending) >= concurrency:
                     collect(wait(pending, return_when=FIRST_COMPLETED).done)
-                future = pool.submit(detect, client, key, pngs, concepts, collections, window)
+                if gate.cancel.is_set():
+                    statuses[window["tile_id"]] = "cancelled"
+                    failures[window["tile_id"]] = {"reason": "cancelled", "attempts": 0}
+                    break
+                future = pool.submit(_tile_call, client, key, pngs, concepts, collections, window, gate)
                 pending[future] = window
             while pending:
                 collect(wait(pending, return_when=FIRST_COMPLETED).done)
-    except httpx.TransportError:
-        raise RuntimeError("Vision endpoint became unreachable during inference") from None
+        except BaseException:
+            gate.cancel.set()
+            raise
+    if gate.cancel.is_set():
+        for tile_id, status in statuses.items():
+            if status is None:
+                statuses[tile_id] = "cancelled"
+                failures[tile_id] = {"reason": "cancelled", "attempts": 0}
     if "analyzed" not in statuses.values() and "error" in statuses.values():
-        raise RuntimeError("No image pair was analyzed successfully; check imagery and Vision configuration")
-    return rows, {"backend": "vision", "model": vision_api.model_info()["name"],
+        reasons = ", ".join(sorted({f["reason"] for f in failures.values()}))
+        raise RuntimeError("No image pair was analyzed successfully; check imagery and Vision configuration"
+                           + (f" ({reasons})" if reasons else ""))
+    candidates = change_boxes.reconcile(rows, windows)
+    return candidates, {"backend": "vision", "model": vision_api.model_info()["name"],
                   "base_url": vision_api.model_info()["base_url"],
                   "detail": "high", "max_output_tokens": vision_api.max_output_tokens(),
                   "geometry_kind": "bbox", "requests": requests,
+                  "request_attempts": attempted, "concurrency": concurrency,
+                  "elapsed_seconds": round(time.monotonic() - started, 3),
+                  "tile_seconds": dict(sorted(timings.items())),
+                  "tile_failures": dict(sorted(failures.items())),
+                  "complete": not failures and all(s == "analyzed" for s in statuses.values()),
+                  "reconciliation": {"raw_candidates": len(rows), "candidates": len(candidates),
+                                     "method": "conservative_complete_link"},
                   "usage_cumulative": usage,
+                  "reported_usage_only": True,
                   "image_token_budget": "Provider controlled; detail=high is requested, not a verified token count"}
