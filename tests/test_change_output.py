@@ -39,13 +39,15 @@ def test_vision_output_preserves_observations_and_projected_geometry(tmp_path):
            619750, 6921950, 619800, 6922000)
     namespace["_write_vision_candidates"](
         Cursor(), sql.Identifier("changes"), [Candidate(row, [observation, {**observation, "tile_id": "b"}],
-                                                            "cross_tile_consensus")],
+                                                            "cross_tile_consensus", True,
+                                                            [{**observation, "change_type": "demolition"}])],
         "before", "after", {"datetime_min": None}, {"datetime_min": None}, 1,
         "POLYGON((-10000000 -10000000,10000000 -10000000,10000000 10000000,"
         "-10000000 10000000,-10000000 -10000000))")
     statements.append("SELECT observation_count, array_to_string(source_tiles, ','),"
                       " jsonb_array_length(observations), merge_method, ST_SRID(geom),"
-                      " area_m2 > 2400 AND area_m2 < 2600 FROM changes;")
+                      " area_m2 > 2400 AND area_m2 < 2600, review_required,"
+                      " conflicting_observations->0->>'change_type' FROM changes;")
     name = "geodata-change-test-" + uuid.uuid4().hex[:10]
     tmp_path.chmod(0o755)
     run = lambda *args, **kw: subprocess.run(["docker", *args], check=True, capture_output=True,
@@ -67,6 +69,6 @@ def test_vision_output_preserves_observations_and_projected_geometry(tmp_path):
                          input="\n".join(statements)).stdout
         except subprocess.CalledProcessError as exc:
             pytest.fail(exc.stderr)
-        assert "2|a,b|2|cross_tile_consensus|3014|t" in output
+        assert "2|a,b|2|cross_tile_consensus|3014|t|t|demolition" in output
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
