@@ -127,6 +127,9 @@ text relevant to the question in your answer and evidence.
     fields = ("answer",) if question is not None else ("text",)
     lists = ("uncertainties", "evidence") if question is not None else ("uncertainties",)
     request = gemma_api.vision_request(prompt, png)
+    if question is None:
+        # Transcription needs faithful copying; reasoning can stall on dense scans.
+        request["reasoning"] = {"enabled": False}
     request["response_format"] = {"type": "json_schema", "json_schema": {
         "name": "document_page", "strict": True, "schema": {
             "type": "object", "additionalProperties": False,

@@ -34,6 +34,7 @@ def model_reply(request):
     schema = request["response_format"]["json_schema"]
     assert schema["strict"] and schema["schema"]["additionalProperties"] is False
     assert "uncertainties" in schema["schema"]["required"]
+    assert request["reasoning"]["enabled"] == ("answer" in schema["schema"]["required"])
     parts = request["messages"][0]["content"]
     assert parts[1]["image_url"]["detail"] == "high"
     assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
