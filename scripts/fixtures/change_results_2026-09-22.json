@@ -1,0 +1,1424 @@
+{
+  "evaluated_at": "2026-09-22",
+  "core_commit": "d7b221010a1d4914e5369e0225d079c6512e2223",
+  "postprocessing": "Semantic rubric corrected and conservative conflict flags replayed from saved outputs; no additional inference purchased for rescoring. Input bounds and output candidates unchanged.",
+  "parameters": {
+    "concepts": [
+      "building"
+    ],
+    "image_size": [
+      800,
+      800
+    ],
+    "gsd_m": 0.25,
+    "detail": "high",
+    "max_output_tokens": 16384,
+    "reasoning_enabled": true,
+    "concurrency": 4,
+    "diagnostic_body_deadline_seconds": 120,
+    "max_attempts_per_tile": 3
+  },
+  "usage_note": "Only usage supplied with returned responses is counted; failed/abandoned attempts and absent usage events may be billed but unreported. These figures are not full run cost.",
+  "run_limitations": [
+    "Initial batch using old body timeout stalled and was stopped; not scored or included in timings/usage.",
+    "No controlled sequential-versus-parallel workload was completed; no measured speedup is claimed.",
+    "The final dedicated-connection deadline transport regression fix followed the positive inference run; detection outputs were reused, not repurchased."
+  ],
+  "cases": [
+    {
+      "case_id": "baldershallen",
+      "split": "development",
+      "sources": [
+        {
+          "tile_id": "tile00",
+          "vintage": "a",
+          "path": "baldershallen-tile00-Lantmateriet:Orto2019_wms.png",
+          "sha256": "20ad31266ecb2c83f905140c65ea15fed4ea61d009d511fb848f1bc65da942aa",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2019_wms&styles=&srs=EPSG%3A3006&bbox=619650%2C6921940%2C619850%2C6922140&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile00",
+          "vintage": "b",
+          "path": "baldershallen-tile00-Lantmateriet:Orto2023_wms.png",
+          "sha256": "2f83d077ab3badaf207d9cf251eccde786943e4a044159b7ca3c496871fea5eb",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=619650%2C6921940%2C619850%2C6922140&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile01",
+          "vintage": "a",
+          "path": "baldershallen-tile01-Lantmateriet:Orto2019_wms.png",
+          "sha256": "33c048883ceaac6b5211f80d292e2b74901ceff0d5681b311eafc990dec23550",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2019_wms&styles=&srs=EPSG%3A3006&bbox=619750%2C6921940%2C619950%2C6922140&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile01",
+          "vintage": "b",
+          "path": "baldershallen-tile01-Lantmateriet:Orto2023_wms.png",
+          "sha256": "7c2ad4a0b089c51f7cc5b8030b9127bc0bd7f8786b5902d306bf1f6cc827f231",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=619750%2C6921940%2C619950%2C6922140&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile02",
+          "vintage": "a",
+          "path": "baldershallen-tile02-Lantmateriet:Orto2019_wms.png",
+          "sha256": "e20a9ee8372017ddaf9d4981316363ed6a62b2db235c097d25f21cd1f711ae79",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2019_wms&styles=&srs=EPSG%3A3006&bbox=619650%2C6921840%2C619850%2C6922040&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile02",
+          "vintage": "b",
+          "path": "baldershallen-tile02-Lantmateriet:Orto2023_wms.png",
+          "sha256": "e135110aa3a70c01c5948c650f7dbe6f4e8bf40b6b9dc8a0e1612686027d6c19",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=619650%2C6921840%2C619850%2C6922040&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile03",
+          "vintage": "a",
+          "path": "baldershallen-tile03-Lantmateriet:Orto2019_wms.png",
+          "sha256": "08c77a644bfa262689670cdf219f5dbe18f0a996c2c55e922521d71675c855cb",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2019_wms&styles=&srs=EPSG%3A3006&bbox=619750%2C6921840%2C619950%2C6922040&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile03",
+          "vintage": "b",
+          "path": "baldershallen-tile03-Lantmateriet:Orto2023_wms.png",
+          "sha256": "a45a57d2d4f769b334a0c3f9757c6dda40739985177b358ddb8c1e3c77374e3b",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=619750%2C6921840%2C619950%2C6922040&width=800&height=800&format=image%2Fpng"
+        }
+      ],
+      "complete": true,
+      "statuses": {
+        "tile00": "analyzed",
+        "tile01": "analyzed",
+        "tile02": "analyzed",
+        "tile03": "analyzed"
+      },
+      "metrics": {
+        "expected_regions": 2,
+        "returned_candidates": 4,
+        "matched_regions": 2,
+        "missed_regions": [],
+        "spatially_matched_regions": 2,
+        "type_mismatches": [],
+        "supported_candidates": [
+          {
+            "candidate": 0,
+            "references": [
+              0
+            ]
+          },
+          {
+            "candidate": 2,
+            "references": [
+              1
+            ]
+          }
+        ],
+        "unsupported_candidates": [
+          1,
+          3
+        ],
+        "outside_evaluation_area": [],
+        "note": "Unsupported proposals require manual review; annotations are approximate regions, not cadastral truth."
+      },
+      "model": {
+        "backend": "vision",
+        "detail": "high",
+        "max_output_tokens": 16384,
+        "geometry_kind": "bbox",
+        "requests": 4,
+        "request_attempts": 4,
+        "concurrency": 4,
+        "elapsed_seconds": 96.847,
+        "tile_seconds": {
+          "tile00": 96.847,
+          "tile01": 73.373,
+          "tile02": 80.348,
+          "tile03": 63.595
+        },
+        "tile_failures": {},
+        "complete": true,
+        "reconciliation": {
+          "raw_candidates": 6,
+          "candidates": 4,
+          "method": "conservative_complete_link"
+        },
+        "usage_cumulative": {
+          "prompt_tokens": 3632,
+          "completion_tokens": 6645,
+          "cost": 0.00255546
+        },
+        "image_token_budget": "Provider controlled; detail=high is requested, not a verified token count",
+        "reported_usage_only": true
+      },
+      "candidates": [
+        {
+          "row": [
+            "tile00",
+            "building",
+            "changed",
+            "extension",
+            "high",
+            "a smaller building with a dark roof",
+            "a significantly larger building with a light grey roof, extending north and east",
+            "The building footprint has expanded northwards, covering the area previously occupied by a grassy field, and has also widened to the east.",
+            619726.0,
+            6921940.0,
+            619798.0,
+            6922076.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile00",
+              "bounds_3006": [
+                619726.0,
+                6921940.0,
+                619798.0,
+                6922076.0
+              ],
+              "clipped_edges": [
+                "south"
+              ],
+              "concept": "building",
+              "change_type": "extension",
+              "confidence_label": "high",
+              "before": "a smaller building with a dark roof",
+              "after": "a significantly larger building with a light grey roof, extending north and east",
+              "evidence": "The building footprint has expanded northwards, covering the area previously occupied by a grassy field, and has also widened to the east."
+            },
+            {
+              "tile_id": "tile01",
+              "bounds_3006": [
+                619750.0,
+                6922014.0,
+                619796.0,
+                6922082.0
+              ],
+              "clipped_edges": [
+                "west"
+              ],
+              "concept": "building",
+              "change_type": "extension",
+              "confidence_label": "high",
+              "before": "a smaller building footprint on the left side of the image",
+              "after": "a significantly larger building footprint extending further north",
+              "evidence": "the roof area of the building on the left has expanded considerably northward, covering previously open ground"
+            }
+          ],
+          "merge_method": "cross_tile_consensus",
+          "review_required": false,
+          "conflicting_observations": []
+        },
+        {
+          "row": [
+            "tile01",
+            "building",
+            "appeared",
+            "new_building",
+            "high",
+            "open ground",
+            "a small dark rectangular structure",
+            "a new small building footprint has appeared to the left of the tennis courts",
+            619819.6,
+            6921942.4,
+            619825.6,
+            6921950.4
+          ],
+          "observations": [
+            {
+              "tile_id": "tile01",
+              "bounds_3006": [
+                619819.6,
+                6921942.4,
+                619825.6,
+                6921950.4
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "open ground",
+              "after": "a small dark rectangular structure",
+              "evidence": "a new small building footprint has appeared to the left of the tennis courts"
+            }
+          ],
+          "merge_method": "single_observation",
+          "review_required": false,
+          "conflicting_observations": []
+        },
+        {
+          "row": [
+            "tile02",
+            "building",
+            "appeared",
+            "new_building",
+            "high",
+            "no building",
+            "large rectangular building",
+            "new roof footprint appearing south of the existing building complex",
+            619756.0,
+            6921853.0,
+            619813.0,
+            6921916.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile02",
+              "bounds_3006": [
+                619756.0,
+                6921853.0,
+                619813.0,
+                6921916.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "no building",
+              "after": "large rectangular building",
+              "evidence": "new roof footprint appearing south of the existing building complex"
+            }
+          ],
+          "merge_method": "single_observation",
+          "review_required": false,
+          "conflicting_observations": []
+        },
+        {
+          "row": [
+            "tile02",
+            "building",
+            "appeared",
+            "new_building",
+            "high",
+            "no building",
+            "small rectangular building",
+            "new small roof footprint appearing near the tennis courts",
+            619819.0,
+            6921938.0,
+            619828.0,
+            6921952.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile02",
+              "bounds_3006": [
+                619819.0,
+                6921938.0,
+                619828.0,
+                6921952.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "no building",
+              "after": "small rectangular building",
+              "evidence": "new small roof footprint appearing near the tennis courts"
+            },
+            {
+              "tile_id": "tile03",
+              "bounds_3006": [
+                619819.6,
+                6921936.4,
+                619827.0,
+                6921949.6
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "grass/dirt area",
+              "after": "small rectangular building/shed",
+              "evidence": "A small dark-roofed structure is now present to the west of the tennis courts, where there was previously only open ground."
+            }
+          ],
+          "merge_method": "cross_tile_consensus",
+          "review_required": false,
+          "conflicting_observations": []
+        }
+      ],
+      "tile_results": [
+        {
+          "tile_id": "tile00",
+          "attempts": 1,
+          "failure": null,
+          "seconds": 96.847,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 2340,
+            "cost": 0.00087732
+          }
+        },
+        {
+          "tile_id": "tile01",
+          "attempts": 1,
+          "failure": null,
+          "seconds": 73.373,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 1740,
+            "cost": 0.00065796
+          }
+        },
+        {
+          "tile_id": "tile02",
+          "attempts": 1,
+          "failure": null,
+          "seconds": 80.348,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 1458,
+            "cost": 0.00056208
+          }
+        },
+        {
+          "tile_id": "tile03",
+          "attempts": 1,
+          "failure": null,
+          "seconds": 63.595,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 1107,
+            "cost": 0.0004581
+          }
+        }
+      ],
+      "manual_review": {
+        "confirmed_false_positives": [],
+        "unverified_candidates": [
+          1,
+          3
+        ],
+        "notes": "Two proposals refer to one small dark structure/container near the courts. Presence/permanence as a building is unverified; conservative merge retains this ambiguous duplicate."
+      }
+    },
+    {
+      "case_id": "skonsmon_school",
+      "split": "held_out",
+      "sources": [
+        {
+          "tile_id": "tile00",
+          "vintage": "a",
+          "path": "skonsmon_school-tile00-Lantmateriet:Orto2010_wms.png",
+          "sha256": "f3a711c87d448b445bc4b0355a92aaf482d204ce148dfad6e4a3b3f7e80b101a",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2010_wms&styles=&srs=EPSG%3A3006&bbox=620700%2C6918700%2C620900%2C6918900&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile00",
+          "vintage": "b",
+          "path": "skonsmon_school-tile00-Lantmateriet:Orto2023_wms.png",
+          "sha256": "9fa2c7f5f95addefa75df95dc9c1be2ae867b9bc0f6cdd96c991aae78c9a5a7a",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=620700%2C6918700%2C620900%2C6918900&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile01",
+          "vintage": "a",
+          "path": "skonsmon_school-tile01-Lantmateriet:Orto2010_wms.png",
+          "sha256": "957a75c980d3b4ea54c42d4b4cc524540f6f7a5de2d9b8509dab80269bb366c1",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2010_wms&styles=&srs=EPSG%3A3006&bbox=620800%2C6918700%2C621000%2C6918900&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile01",
+          "vintage": "b",
+          "path": "skonsmon_school-tile01-Lantmateriet:Orto2023_wms.png",
+          "sha256": "6b3398eb014cc69124663ef8dc9790f1c1e4e754bfefaca14d17b19399b1668b",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=620800%2C6918700%2C621000%2C6918900&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile02",
+          "vintage": "a",
+          "path": "skonsmon_school-tile02-Lantmateriet:Orto2010_wms.png",
+          "sha256": "fc4c97c4f2972bee44830410bca9a7c2606c833667067d6b3501f0668f0b6782",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2010_wms&styles=&srs=EPSG%3A3006&bbox=620700%2C6918800%2C620900%2C6919000&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile02",
+          "vintage": "b",
+          "path": "skonsmon_school-tile02-Lantmateriet:Orto2023_wms.png",
+          "sha256": "1fc2d2b2c3cc8fa8bc9cb5ddc24c8961fb21435744b2f3c38902a9efa7f5af1c",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=620700%2C6918800%2C620900%2C6919000&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile03",
+          "vintage": "a",
+          "path": "skonsmon_school-tile03-Lantmateriet:Orto2010_wms.png",
+          "sha256": "0c4ba36e2787b96ecbc30487c427a614731faeb5d86b51b5d0bcd129db7d72e7",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2010_wms&styles=&srs=EPSG%3A3006&bbox=620800%2C6918800%2C621000%2C6919000&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile03",
+          "vintage": "b",
+          "path": "skonsmon_school-tile03-Lantmateriet:Orto2023_wms.png",
+          "sha256": "ded3c653399c7b227f995287cc93c8e5a9c7a1461be94989139037bba5684c76",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=620800%2C6918800%2C621000%2C6919000&width=800&height=800&format=image%2Fpng"
+        }
+      ],
+      "complete": true,
+      "statuses": {
+        "tile00": "analyzed",
+        "tile01": "analyzed",
+        "tile02": "analyzed",
+        "tile03": "analyzed"
+      },
+      "metrics": {
+        "expected_regions": 3,
+        "returned_candidates": 7,
+        "matched_regions": 3,
+        "missed_regions": [],
+        "spatially_matched_regions": 3,
+        "type_mismatches": [
+          {
+            "candidate": 3,
+            "reference": 2,
+            "actual": "new_building",
+            "expected": [
+              "demolition",
+              "disappearance"
+            ]
+          }
+        ],
+        "supported_candidates": [
+          {
+            "candidate": 0,
+            "references": [
+              1
+            ]
+          },
+          {
+            "candidate": 1,
+            "references": [
+              2
+            ]
+          },
+          {
+            "candidate": 2,
+            "references": [
+              0
+            ]
+          },
+          {
+            "candidate": 5,
+            "references": [
+              0
+            ]
+          }
+        ],
+        "unsupported_candidates": [
+          3
+        ],
+        "outside_evaluation_area": [
+          4,
+          6
+        ],
+        "note": "Unsupported proposals require manual review; annotations are approximate regions, not cadastral truth."
+      },
+      "model": {
+        "backend": "vision",
+        "detail": "high",
+        "max_output_tokens": 16384,
+        "geometry_kind": "bbox",
+        "requests": 4,
+        "request_attempts": 8,
+        "concurrency": 4,
+        "elapsed_seconds": 357.11,
+        "tile_seconds": {
+          "tile00": 51.991,
+          "tile01": 357.103,
+          "tile02": 231.041,
+          "tile03": 194.08
+        },
+        "tile_failures": {},
+        "complete": true,
+        "reconciliation": {
+          "raw_candidates": 9,
+          "candidates": 7,
+          "method": "conservative_complete_link"
+        },
+        "usage_cumulative": {
+          "prompt_tokens": 3632,
+          "completion_tokens": 15387,
+          "cost": 0.0055431
+        },
+        "image_token_budget": "Provider controlled; detail=high is requested, not a verified token count",
+        "reported_usage_only": true
+      },
+      "candidates": [
+        {
+          "row": [
+            "tile00",
+            "building",
+            "appeared",
+            "new_building",
+            "high",
+            "open area",
+            "large rectangular building",
+            "a new large building footprint is visible where there was previously open ground",
+            620771.0,
+            6918779.0,
+            620810.0,
+            6918834.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile00",
+              "bounds_3006": [
+                620771.0,
+                6918779.0,
+                620810.0,
+                6918834.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "open area",
+              "after": "large rectangular building",
+              "evidence": "a new large building footprint is visible where there was previously open ground"
+            },
+            {
+              "tile_id": "tile02",
+              "bounds_3006": [
+                620774.0,
+                6918801.0,
+                620810.0,
+                6918836.0
+              ],
+              "clipped_edges": [
+                "south"
+              ],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "grass and paths",
+              "after": "large grey building",
+              "evidence": "A large rectangular building with a grey roof is now present where there was previously only grass and paths."
+            }
+          ],
+          "merge_method": "cross_tile_consensus",
+          "review_required": false,
+          "conflicting_observations": []
+        },
+        {
+          "row": [
+            "tile00",
+            "building",
+            "disappeared",
+            "demolition",
+            "high",
+            "small rectangular building",
+            "sports court/open area",
+            "the small building present in Image A is no longer visible in Image B",
+            620803.0,
+            6918767.0,
+            620842.0,
+            6918786.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile00",
+              "bounds_3006": [
+                620803.0,
+                6918767.0,
+                620842.0,
+                6918786.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "demolition",
+              "confidence_label": "high",
+              "before": "small rectangular building",
+              "after": "sports court/open area",
+              "evidence": "the small building present in Image A is no longer visible in Image B"
+            }
+          ],
+          "merge_method": "single_observation",
+          "review_required": true,
+          "conflicting_observations": [
+            {
+              "tile_id": "tile01",
+              "bounds_3006": [
+                620808.0,
+                6918768.0,
+                620840.0,
+                6918784.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "open sandy area",
+              "after": "a small building with a green roof",
+              "evidence": "a small building is now present where there was previously open ground"
+            }
+          ]
+        },
+        {
+          "row": [
+            "tile01",
+            "building",
+            "appeared",
+            "new_building",
+            "high",
+            "a long white building with a gabled roof",
+            "a larger grey building with a flat roof",
+            "the white building is replaced by a grey building with a different footprint",
+            620805.0,
+            6918836.0,
+            620860.0,
+            6918871.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile01",
+              "bounds_3006": [
+                620805.0,
+                6918836.0,
+                620860.0,
+                6918871.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "a long white building with a gabled roof",
+              "after": "a larger grey building with a flat roof",
+              "evidence": "the white building is replaced by a grey building with a different footprint"
+            }
+          ],
+          "merge_method": "single_observation",
+          "review_required": false,
+          "conflicting_observations": []
+        },
+        {
+          "row": [
+            "tile01",
+            "building",
+            "appeared",
+            "new_building",
+            "high",
+            "open sandy area",
+            "a small building with a green roof",
+            "a small building is now present where there was previously open ground",
+            620808.0,
+            6918768.0,
+            620840.0,
+            6918784.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile01",
+              "bounds_3006": [
+                620808.0,
+                6918768.0,
+                620840.0,
+                6918784.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "open sandy area",
+              "after": "a small building with a green roof",
+              "evidence": "a small building is now present where there was previously open ground"
+            }
+          ],
+          "merge_method": "single_observation",
+          "review_required": true,
+          "conflicting_observations": [
+            {
+              "tile_id": "tile00",
+              "bounds_3006": [
+                620803.0,
+                6918767.0,
+                620842.0,
+                6918786.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "demolition",
+              "confidence_label": "high",
+              "before": "small rectangular building",
+              "after": "sports court/open area",
+              "evidence": "the small building present in Image A is no longer visible in Image B"
+            }
+          ]
+        },
+        {
+          "row": [
+            "tile02",
+            "building",
+            "appeared",
+            "new_building",
+            "medium",
+            "small dark structures or vegetation",
+            "small grey building",
+            "A small grey-roofed building is now visible where there were only indistinct dark shapes.",
+            620768.0,
+            6918914.0,
+            620798.0,
+            6918932.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile02",
+              "bounds_3006": [
+                620768.0,
+                6918914.0,
+                620798.0,
+                6918932.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "medium",
+              "before": "small dark structures or vegetation",
+              "after": "small grey building",
+              "evidence": "A small grey-roofed building is now visible where there were only indistinct dark shapes."
+            }
+          ],
+          "merge_method": "single_observation",
+          "review_required": false,
+          "conflicting_observations": []
+        },
+        {
+          "row": [
+            "tile02",
+            "building",
+            "changed",
+            "extension",
+            "high",
+            "smaller grey building",
+            "larger grey building",
+            "The building's footprint has changed significantly, becoming a larger, more uniform rectangular structure.",
+            620804.0,
+            6918834.0,
+            620860.0,
+            6918874.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile02",
+              "bounds_3006": [
+                620804.0,
+                6918834.0,
+                620860.0,
+                6918874.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "extension",
+              "confidence_label": "high",
+              "before": "smaller grey building",
+              "after": "larger grey building",
+              "evidence": "The building's footprint has changed significantly, becoming a larger, more uniform rectangular structure."
+            },
+            {
+              "tile_id": "tile03",
+              "bounds_3006": [
+                620803.0,
+                6918834.0,
+                620860.0,
+                6918873.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "extension",
+              "confidence_label": "high",
+              "before": "a smaller building with two distinct roof sections",
+              "after": "a larger building with a single, continuous dark roof",
+              "evidence": "The building's footprint has expanded, and the roof structure has been unified into a larger single unit."
+            }
+          ],
+          "merge_method": "cross_tile_consensus",
+          "review_required": false,
+          "conflicting_observations": []
+        },
+        {
+          "row": [
+            "tile03",
+            "building",
+            "changed",
+            "extension",
+            "high",
+            "a small blue building",
+            "a larger building with a red roof and a grey extension",
+            "The footprint of the structure has significantly increased in size.",
+            620956.0,
+            6918846.0,
+            620974.0,
+            6918868.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile03",
+              "bounds_3006": [
+                620956.0,
+                6918846.0,
+                620974.0,
+                6918868.0
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "extension",
+              "confidence_label": "high",
+              "before": "a small blue building",
+              "after": "a larger building with a red roof and a grey extension",
+              "evidence": "The footprint of the structure has significantly increased in size."
+            }
+          ],
+          "merge_method": "single_observation",
+          "review_required": false,
+          "conflicting_observations": []
+        }
+      ],
+      "tile_results": [
+        {
+          "tile_id": "tile00",
+          "attempts": 1,
+          "failure": null,
+          "seconds": 51.991,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 1341,
+            "cost": 0.0005223
+          }
+        },
+        {
+          "tile_id": "tile01",
+          "attempts": 3,
+          "failure": null,
+          "seconds": 357.103,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 5578,
+            "cost": 0.00197824
+          }
+        },
+        {
+          "tile_id": "tile02",
+          "attempts": 2,
+          "failure": null,
+          "seconds": 231.041,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 5439,
+            "cost": 0.00193098
+          }
+        },
+        {
+          "tile_id": "tile03",
+          "attempts": 2,
+          "failure": null,
+          "seconds": 194.08,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 3029,
+            "cost": 0.00111158
+          }
+        }
+      ],
+      "manual_review": {
+        "confirmed_false_positives": [
+          3
+        ],
+        "unverified_candidates": [],
+        "notes": "Candidate3 falsely labels the removed pavilion/current sports court as a new green-roofed building, opposite to candidate1. Two other proposals outside the evaluation bounds are unscored. The northern replacement also has a separate extension proposal."
+      }
+    },
+    {
+      "case_id": "norra_kajen",
+      "split": "held_out",
+      "sources": [
+        {
+          "tile_id": "tile00",
+          "vintage": "a",
+          "path": "norra_kajen-tile00-Lantmateriet:Orto2019_wms.png",
+          "sha256": "4faddc67508f2b25d28c366c215f1126b0cd57f63d5d6f92df91c8a04cc0914d",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2019_wms&styles=&srs=EPSG%3A3006&bbox=619700%2C6920100%2C619900%2C6920300&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile00",
+          "vintage": "b",
+          "path": "norra_kajen-tile00-Lantmateriet:Orto2023_wms.png",
+          "sha256": "3907ff45558910aa4027b180bb7145731e1f6b306f535f33a2df68d35bae0070",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=619700%2C6920100%2C619900%2C6920300&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile01",
+          "vintage": "a",
+          "path": "norra_kajen-tile01-Lantmateriet:Orto2019_wms.png",
+          "sha256": "f90298675bd6a5914b491e641292500ca2383451cb0e8cf708958849a7e7265f",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2019_wms&styles=&srs=EPSG%3A3006&bbox=619750%2C6920100%2C619950%2C6920300&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile01",
+          "vintage": "b",
+          "path": "norra_kajen-tile01-Lantmateriet:Orto2023_wms.png",
+          "sha256": "008f3b352a8cc1e29dabbe4fc4578026a31e60032f73dfbbbeb50b82e7e89d15",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=619750%2C6920100%2C619950%2C6920300&width=800&height=800&format=image%2Fpng"
+        }
+      ],
+      "complete": true,
+      "statuses": {
+        "tile00": "analyzed",
+        "tile01": "analyzed"
+      },
+      "metrics": {
+        "expected_regions": 2,
+        "returned_candidates": 1,
+        "matched_regions": 2,
+        "missed_regions": [],
+        "spatially_matched_regions": 2,
+        "type_mismatches": [],
+        "supported_candidates": [
+          {
+            "candidate": 0,
+            "references": [
+              0,
+              1
+            ]
+          }
+        ],
+        "unsupported_candidates": [],
+        "outside_evaluation_area": [],
+        "note": "Unsupported proposals require manual review; annotations are approximate regions, not cadastral truth."
+      },
+      "model": {
+        "backend": "vision",
+        "detail": "high",
+        "max_output_tokens": 16384,
+        "geometry_kind": "bbox",
+        "requests": 2,
+        "request_attempts": 2,
+        "concurrency": 4,
+        "elapsed_seconds": 28.2,
+        "tile_seconds": {
+          "tile00": 26.138,
+          "tile01": 28.194
+        },
+        "tile_failures": {},
+        "complete": true,
+        "reconciliation": {
+          "raw_candidates": 2,
+          "candidates": 1,
+          "method": "conservative_complete_link"
+        },
+        "usage_cumulative": {
+          "prompt_tokens": 1816,
+          "completion_tokens": 1801,
+          "cost": 0.00077578
+        },
+        "image_token_budget": "Provider controlled; detail=high is requested, not a verified token count",
+        "reported_usage_only": true
+      },
+      "candidates": [
+        {
+          "row": [
+            "tile00",
+            "building",
+            "appeared",
+            "new_building",
+            "high",
+            "construction site",
+            "new buildings",
+            "The area previously consisting of excavated ground and construction equipment in Image A now contains completed building structures with dark roofs in Image B.",
+            619700.0,
+            6920148.0,
+            619810.0,
+            6920250.0
+          ],
+          "observations": [
+            {
+              "tile_id": "tile00",
+              "bounds_3006": [
+                619700.0,
+                6920148.0,
+                619810.0,
+                6920250.0
+              ],
+              "clipped_edges": [
+                "west"
+              ],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "construction site",
+              "after": "new buildings",
+              "evidence": "The area previously consisting of excavated ground and construction equipment in Image A now contains completed building structures with dark roofs in Image B."
+            },
+            {
+              "tile_id": "tile01",
+              "bounds_3006": [
+                619750.0,
+                6920148.0,
+                619810.0,
+                6920254.0
+              ],
+              "clipped_edges": [
+                "west"
+              ],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "construction site",
+              "after": "new buildings with dark roofs",
+              "evidence": "The construction site visible in Image A has been replaced by completed buildings with dark roofs in Image B."
+            }
+          ],
+          "merge_method": "cross_tile_consensus",
+          "review_required": false,
+          "conflicting_observations": []
+        }
+      ],
+      "tile_results": [
+        {
+          "tile_id": "tile00",
+          "attempts": 1,
+          "failure": null,
+          "seconds": 26.138,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 1014,
+            "cost": 0.00042648
+          }
+        },
+        {
+          "tile_id": "tile01",
+          "attempts": 1,
+          "failure": null,
+          "seconds": 28.194,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 787,
+            "cost": 0.0003493
+          }
+        }
+      ],
+      "manual_review": {
+        "confirmed_false_positives": [],
+        "unverified_candidates": [],
+        "notes": "One broad box covers both annotated housing blocks. Region recall does not establish that two objects were independently localized."
+      }
+    },
+    {
+      "case_id": "residential_control",
+      "split": "held_out_control",
+      "sources": [
+        {
+          "tile_id": "tile00",
+          "vintage": "a",
+          "path": "residential_control-tile00-Lantmateriet:Orto2019_wms.png",
+          "sha256": "ff55e3ce36bdd5d915af021b83a78d0da945c77c6e529d74c509420513597067",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2019_wms&styles=&srs=EPSG%3A3006&bbox=620010%2C6920440%2C620210%2C6920640&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile00",
+          "vintage": "b",
+          "path": "residential_control-tile00-Lantmateriet:Orto2023_wms.png",
+          "sha256": "9f2d2fb07f81f99abb243c7a5290d8032da835a01f26761fb21b576ada5ce729",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=620010%2C6920440%2C620210%2C6920640&width=800&height=800&format=image%2Fpng"
+        }
+      ],
+      "complete": false,
+      "statuses": {
+        "tile00": "error"
+      },
+      "metrics": null,
+      "candidates": null,
+      "model": {
+        "request_attempts": 3,
+        "elapsed_seconds": 246.057,
+        "reported_usage_only": true
+      },
+      "record_note": "Reconstructed from saved completed-tile failure record after initial runner aborted on all-failed case.",
+      "tile_results": [
+        {
+          "tile_id": "tile00",
+          "attempts": 3,
+          "failure": "stream_deadline",
+          "seconds": 246.057,
+          "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0
+          }
+        }
+      ],
+      "manual_review": {
+        "confirmed_false_positives": null,
+        "unverified_candidates": null,
+        "notes": "All three attempts failed. This is an unavailable result, not a no-change success."
+      }
+    },
+    {
+      "case_id": "sports_control",
+      "split": "held_out_control",
+      "sources": [
+        {
+          "tile_id": "tile00",
+          "vintage": "a",
+          "path": "sports_control-tile00-Lantmateriet:Orto2019_wms.png",
+          "sha256": "a3fa11a57ea59cf93bb8c0976426fb750c1a0cc92577b28eeca0aade2e20abf6",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2019_wms&styles=&srs=EPSG%3A3006&bbox=619500%2C6921850%2C619700%2C6922050&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile00",
+          "vintage": "b",
+          "path": "sports_control-tile00-Lantmateriet:Orto2023_wms.png",
+          "sha256": "62629e9294f6b57564143a77ab7f574de072665acb61af862fd63e40c812ee36",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=619500%2C6921850%2C619700%2C6922050&width=800&height=800&format=image%2Fpng"
+        }
+      ],
+      "complete": true,
+      "statuses": {
+        "tile00": "analyzed"
+      },
+      "metrics": {
+        "expected_regions": 0,
+        "returned_candidates": 1,
+        "matched_regions": 0,
+        "missed_regions": [],
+        "spatially_matched_regions": 0,
+        "type_mismatches": [],
+        "supported_candidates": [],
+        "unsupported_candidates": [
+          0
+        ],
+        "outside_evaluation_area": [],
+        "note": "Unsupported proposals require manual review; annotations are approximate regions, not cadastral truth."
+      },
+      "model": {
+        "backend": "vision",
+        "detail": "high",
+        "max_output_tokens": 16384,
+        "geometry_kind": "bbox",
+        "requests": 1,
+        "request_attempts": 1,
+        "concurrency": 4,
+        "elapsed_seconds": 81.526,
+        "tile_seconds": {
+          "tile00": 81.526
+        },
+        "tile_failures": {},
+        "complete": true,
+        "reconciliation": {
+          "raw_candidates": 1,
+          "candidates": 1,
+          "method": "conservative_complete_link"
+        },
+        "usage_cumulative": {
+          "prompt_tokens": 908,
+          "completion_tokens": 1263,
+          "cost": 0.00051114
+        },
+        "reported_usage_only": true,
+        "image_token_budget": "Provider controlled; detail=high is requested, not a verified token count"
+      },
+      "candidates": [
+        {
+          "row": [
+            "tile00",
+            "building",
+            "appeared",
+            "new_building",
+            "high",
+            "no building",
+            "small white building",
+            "A new small white rectangular structure is visible next to the existing building.",
+            619553.0,
+            6921902.8,
+            619559.6,
+            6921910.4
+          ],
+          "observations": [
+            {
+              "tile_id": "tile00",
+              "bounds_3006": [
+                619553.0,
+                6921902.8,
+                619559.6,
+                6921910.4
+              ],
+              "clipped_edges": [],
+              "concept": "building",
+              "change_type": "new_building",
+              "confidence_label": "high",
+              "before": "no building",
+              "after": "small white building",
+              "evidence": "A new small white rectangular structure is visible next to the existing building."
+            }
+          ],
+          "merge_method": "single_observation",
+          "review_required": false,
+          "conflicting_observations": []
+        }
+      ],
+      "tile_results": [
+        {
+          "tile_id": "tile00",
+          "attempts": 1,
+          "failure": null,
+          "seconds": 81.526,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 1263,
+            "cost": 0.00051114
+          }
+        }
+      ],
+      "manual_review": {
+        "confirmed_false_positives": [
+          0
+        ],
+        "unverified_candidates": [],
+        "notes": "Returned bounds [619553,6921902.8,619559.6,6921910.4] fall on vegetation beside the sports pitch, not a new white building. Bright small objects elsewhere in the image are not at these coordinates."
+      }
+    },
+    {
+      "case_id": "identical_control",
+      "split": "held_out_control",
+      "sources": [
+        {
+          "tile_id": "tile00",
+          "vintage": "a",
+          "path": "identical_control-tile00-Lantmateriet:Orto2023_wms.png",
+          "sha256": "3907ff45558910aa4027b180bb7145731e1f6b306f535f33a2df68d35bae0070",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=619700%2C6920100%2C619900%2C6920300&width=800&height=800&format=image%2Fpng"
+        },
+        {
+          "tile_id": "tile00",
+          "vintage": "b",
+          "path": "identical_control-tile00-Lantmateriet:Orto2023_wms.png",
+          "sha256": "3907ff45558910aa4027b180bb7145731e1f6b306f535f33a2df68d35bae0070",
+          "source_url": "https://karta.sundsvall.se/geoserver/ows?service=WMS&version=1.1.1&request=GetMap&layers=Lantmateriet%3AOrto2023_wms&styles=&srs=EPSG%3A3006&bbox=619700%2C6920100%2C619900%2C6920300&width=800&height=800&format=image%2Fpng"
+        }
+      ],
+      "complete": true,
+      "statuses": {
+        "tile00": "analyzed"
+      },
+      "metrics": {
+        "expected_regions": 0,
+        "returned_candidates": 0,
+        "matched_regions": 0,
+        "missed_regions": [],
+        "spatially_matched_regions": 0,
+        "type_mismatches": [],
+        "supported_candidates": [],
+        "unsupported_candidates": [],
+        "outside_evaluation_area": [],
+        "note": "Unsupported proposals require manual review; annotations are approximate regions, not cadastral truth."
+      },
+      "model": {
+        "backend": "vision",
+        "detail": "high",
+        "max_output_tokens": 16384,
+        "geometry_kind": "bbox",
+        "requests": 1,
+        "request_attempts": 1,
+        "concurrency": 4,
+        "elapsed_seconds": 18.846,
+        "tile_seconds": {
+          "tile00": 18.846
+        },
+        "tile_failures": {},
+        "complete": true,
+        "reconciliation": {
+          "raw_candidates": 0,
+          "candidates": 0,
+          "method": "conservative_complete_link"
+        },
+        "usage_cumulative": {
+          "prompt_tokens": 908,
+          "completion_tokens": 140,
+          "cost": 0.00012932
+        },
+        "reported_usage_only": true,
+        "image_token_budget": "Provider controlled; detail=high is requested, not a verified token count"
+      },
+      "candidates": [],
+      "tile_results": [
+        {
+          "tile_id": "tile00",
+          "attempts": 1,
+          "failure": null,
+          "seconds": 18.846,
+          "usage": {
+            "prompt_tokens": 908,
+            "completion_tokens": 140,
+            "cost": 0.00012932
+          }
+        }
+      ],
+      "manual_review": {
+        "confirmed_false_positives": [],
+        "unverified_candidates": [],
+        "notes": "No candidates on byte-identical inputs; this alone does not establish different-date robustness."
+      }
+    }
+  ],
+  "reasoning_diagnostic": [
+    {
+      "reasoning": true,
+      "elapsed": 44.76,
+      "finish": "stop",
+      "content_chars": 326,
+      "reasoning_chars": 3885,
+      "events": 1067,
+      "heartbeats": 2,
+      "error": null,
+      "usage": {
+        "prompt_tokens": 888,
+        "completion_tokens": 1240,
+        "cost": 0.00050152
+      },
+      "changes": [
+        {
+          "concept": "building",
+          "change_type": "extension",
+          "confidence_label": "high",
+          "before": "a smaller building",
+          "after": "a larger building extending northwards",
+          "evidence": "the building footprint has expanded significantly to the north, replacing a previously grassy area",
+          "bbox_1000": [
+            380,
+            300,
+            740,
+            600
+          ]
+        }
+      ]
+    },
+    {
+      "reasoning": false,
+      "elapsed": 4.97,
+      "finish": "stop",
+      "content_chars": 410,
+      "reasoning_chars": 0,
+      "events": 107,
+      "heartbeats": 0,
+      "error": null,
+      "usage": {
+        "prompt_tokens": 885,
+        "completion_tokens": 106,
+        "cost": 0.00011569
+      },
+      "changes": [
+        {
+          "concept": "building",
+          "change_type": "extension",
+          "confidence_label": "high",
+          "before": "a smaller rectangular building",
+          "after": "a significantly larger rectangular building extending northwards",
+          "evidence": "The roof footprint of the main building has expanded significantly to the north, covering the area where the grass field was previously located.",
+          "bbox_1000": [
+            296,
+            343,
+            734,
+            998
+          ]
+        }
+      ]
+    }
+  ]
+}

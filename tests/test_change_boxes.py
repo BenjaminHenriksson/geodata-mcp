@@ -50,3 +50,31 @@ def test_result_is_order_independent_and_same_tile_boxes_are_not_merged():
 
 def test_unchanged_input_stays_empty():
     assert reconcile([], []) == []
+
+
+def test_opposing_cross_tile_observations_require_review_without_reclassification():
+    rows = [row("a", (0, 0, 100, 100)), row("b", (2, 2, 102, 102), "demolition")]
+    result = reconcile(rows, [window("a"), window("b")])
+    assert [c.row for c in result] == rows
+    assert all(c.review_required for c in result)
+    assert result[0].conflicting_observations == result[1].observations
+    assert result[1].conflicting_observations == result[0].observations
+    assert reconcile(rows[::-1], [window("a"), window("b")]) == result
+
+
+def test_contained_opposite_direction_requires_review_but_neighbors_do_not():
+    rows = [row("a", (0, 0, 100, 100)), row("b", (20, 20, 40, 40), "disappearance"),
+            row("c", (101, 0, 201, 100), "demolition")]
+    result = reconcile(rows, [window(t) for t in "abc"])
+    assert [c.review_required for c in result] == [True, True, False]
+
+
+def test_compatible_types_same_tile_and_different_concepts_do_not_flag_conflict():
+    compatible = [row("a", (0, 0, 100, 100)), row("b", (2, 2, 102, 102), "extension")]
+    assert not any(c.review_required for c in reconcile(compatible, [window("a"), window("b")]))
+    rows = [row("a", (0, 0, 100, 100)), row("b", (2, 2, 102, 102), "extension"),
+            row("a", (0, 0, 100, 100), "demolition")]
+    # A different concept at the same location is not contradictory evidence.
+    rows[1] = (rows[1][0], "vegetation", *rows[1][2:])
+    result = reconcile(rows, [window("a"), window("b")])
+    assert not any(c.review_required for c in result)

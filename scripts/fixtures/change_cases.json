@@ -1,0 +1,483 @@
+{
+  "version": 1,
+  "reviewed_at": "2026-09-22",
+  "wms_url": "https://karta.sundsvall.se/geoserver/ows",
+  "annotation_policy": "Reference regions were drawn by visual comparison before inference. They identify major visible construction events, not exact footprints or permit compliance. Vintage years are collection labels; exact flight dates are not published by this WMS. No drone images were used.",
+  "matching_policy": "IoU>=0.25 or reference coverage>=0.5, with proposal area<=4x reference area and compatible change type. Only proposals with >=50% of their area inside the declared evaluation bounds are scored. Multiple supporting proposals are recorded, not converted into calibrated confidence.",
+  "cases": [
+    {
+      "id": "baldershallen",
+      "title": "Baldershallen hall expansion",
+      "vintages": {
+        "a": "Lantmateriet:Orto2019_wms",
+        "b": "Lantmateriet:Orto2023_wms"
+      },
+      "windows_3006": [
+        [
+          619650,
+          6921940,
+          619850,
+          6922140
+        ],
+        [
+          619750,
+          6921940,
+          619950,
+          6922140
+        ],
+        [
+          619650,
+          6921840,
+          619850,
+          6922040
+        ],
+        [
+          619750,
+          6921840,
+          619950,
+          6922040
+        ]
+      ],
+      "evaluation_bounds_3006": [
+        619715,
+        6921840,
+        619825,
+        6922090
+      ],
+      "expected": [
+        {
+          "name": "Northern/eastern hall extension",
+          "bounds_3006": [
+            619723,
+            6921950,
+            619808,
+            6922075
+          ],
+          "change_types": [
+            "new_building",
+            "appearance",
+            "extension"
+          ]
+        },
+        {
+          "name": "Southeastern hall extension",
+          "bounds_3006": [
+            619755,
+            6921848,
+            619815,
+            6921920
+          ],
+          "change_types": [
+            "new_building",
+            "appearance",
+            "extension"
+          ]
+        }
+      ],
+      "split": "development",
+      "demo_cases": [
+        1,
+        3
+      ],
+      "dated_evidence": [
+        {
+          "date": "2022-06-14",
+          "url": "https://www.balder.se/om-balder/press/06142022-0836/peab-f-rdigst-ller-nya-baldershallen-och-balder-tar--ver-som-fastighets-gare",
+          "supports": "Owner reports completed new and rebuilt hall areas and keys to be handed over on 1 July 2022."
+        },
+        {
+          "date": "2022-08-26",
+          "url": "https://www.tennis.se/tennis-se/dags-for-invigning-av-nya-baldershallen-i-sundsvall/",
+          "supports": "National sports federation describes inauguration and two years of construction."
+        }
+      ],
+      "evidence_gaps": [
+        "Public permit record exists, but approved drawing revision/page and decision conditions are not verified. Do not claim a departure from the permit."
+      ],
+      "permit_evidence": {
+        "retrieved": "2026-09-22",
+        "property": "HAGA 4:51",
+        "record": "BYGG2021-000790",
+        "url": "https://sundsvallportal.ondemand.formpipe.com/Controllers/Aip/ViewMetadata?contentId=15&archiveId=20&aipId=6e932080-c91d-4154-81df-eb72d8fac973",
+        "created": "2021-05-20",
+        "closed": "2022-10-17",
+        "description": "Public archive metadata: extension, layout/facade changes and parking at Baldershov; Situationsplan document created 2021-09-02.",
+        "verification_limit": "Metadata inspected; drawing download was blocked in the browser. Approved revision/page and decision conditions remain unverified."
+      },
+      "demo_analysis_params": {
+        "backend": "vision",
+        "area": "POLYGON((153402.247 6922467.256,153702.133 6922456.814,153712.576 6922756.699,153412.690 6922767.142,153402.247 6922467.256))",
+        "concepts": [
+          "building"
+        ],
+        "collection_a": "Lantmateriet:Orto2019_wms",
+        "collection_b": "Lantmateriet:Orto2023_wms",
+        "table_name": "demo_baldershallen",
+        "gsd": 0.25,
+        "min_area_m2": 1
+      },
+      "demo_grid_note": "MCP uses its production tile grid over this area. Use the file-based runner to reproduce the exact frozen tile windows and scoring; geometry transformation can shift the production grid."
+    },
+    {
+      "id": "skonsmon_school",
+      "title": "Skönsmons school rebuild",
+      "vintages": {
+        "a": "Lantmateriet:Orto2010_wms",
+        "b": "Lantmateriet:Orto2023_wms"
+      },
+      "windows_3006": [
+        [
+          620700,
+          6918700,
+          620900,
+          6918900
+        ],
+        [
+          620800,
+          6918700,
+          621000,
+          6918900
+        ],
+        [
+          620700,
+          6918800,
+          620900,
+          6919000
+        ],
+        [
+          620800,
+          6918800,
+          621000,
+          6919000
+        ]
+      ],
+      "evaluation_bounds_3006": [
+        620765,
+        6918750,
+        620865,
+        6918890
+      ],
+      "expected": [
+        {
+          "name": "Northern replacement hall",
+          "bounds_3006": [
+            620803,
+            6918833,
+            620855,
+            6918873
+          ],
+          "change_types": [
+            "new_building",
+            "appearance",
+            "extension"
+          ]
+        },
+        {
+          "name": "New western school wing",
+          "bounds_3006": [
+            620771,
+            6918775,
+            620815,
+            6918835
+          ],
+          "change_types": [
+            "new_building",
+            "appearance"
+          ]
+        },
+        {
+          "name": "Removed central pavilion",
+          "bounds_3006": [
+            620802,
+            6918762,
+            620845,
+            6918787
+          ],
+          "change_types": [
+            "demolition",
+            "disappearance"
+          ]
+        }
+      ],
+      "split": "held_out",
+      "demo_cases": [
+        1,
+        3
+      ],
+      "dated_evidence": [
+        {
+          "date": "2017-05-17",
+          "url": "https://news.cision.com/se/sundsvalls-kommun/r/dags-for-forsta-spadtaget-for-skonsmons-skola---en-skola-anpassad-for-framtiden,c2266980",
+          "supports": "Municipality announces groundbreaking on 18 May 2017, a new schoolhouse/sports hall and removal of Linjalen/Paviljongen/Modulen; completion planned for autumn 2020."
+        },
+        {
+          "date": "2018-05-29",
+          "url": "https://news.cision.com/se/sundsvalls-kommun/r/invigning-av-den-nya-skolrestaurangen-pa-skonsmons-skola,c2534320",
+          "supports": "Municipality reports the first renovation phase complete and restaurant opening on 30 May 2018."
+        }
+      ],
+      "evidence_gaps": [
+        "2016 WMS returned missing imagery, so 2010 is used; this wider interval can contain unrelated changes.",
+        "School campus regions manually reviewed; other changes outside evaluation bounds are unscored.",
+        "No permit decision or approved drawing is provided."
+      ],
+      "demo_analysis_params": {
+        "backend": "vision",
+        "area": "POLYGON((154342.560 6919291.912,154642.445 6919281.472,154652.885 6919581.357,154353.000 6919591.797,154342.560 6919291.912))",
+        "concepts": [
+          "building"
+        ],
+        "collection_a": "Lantmateriet:Orto2010_wms",
+        "collection_b": "Lantmateriet:Orto2023_wms",
+        "table_name": "demo_skonsmon_school",
+        "gsd": 0.25,
+        "min_area_m2": 1
+      },
+      "demo_grid_note": "MCP uses its production tile grid over this area. Use the file-based runner to reproduce the exact frozen tile windows and scoring; geometry transformation can shift the production grid."
+    },
+    {
+      "id": "norra_kajen",
+      "title": "Norra kajen waterfront housing",
+      "vintages": {
+        "a": "Lantmateriet:Orto2019_wms",
+        "b": "Lantmateriet:Orto2023_wms"
+      },
+      "windows_3006": [
+        [
+          619700,
+          6920100,
+          619900,
+          6920300
+        ],
+        [
+          619750,
+          6920100,
+          619950,
+          6920300
+        ]
+      ],
+      "evaluation_bounds_3006": [
+        619735,
+        6920130,
+        619815,
+        6920260
+      ],
+      "expected": [
+        {
+          "name": "Northern housing courtyard block",
+          "bounds_3006": [
+            619742,
+            6920185,
+            619815,
+            6920253
+          ],
+          "change_types": [
+            "new_building",
+            "appearance"
+          ]
+        },
+        {
+          "name": "Southern housing block",
+          "bounds_3006": [
+            619741,
+            6920140,
+            619814,
+            6920187
+          ],
+          "change_types": [
+            "new_building",
+            "appearance"
+          ]
+        }
+      ],
+      "split": "held_out",
+      "demo_cases": [
+        1,
+        7
+      ],
+      "dated_evidence": [
+        {
+          "date": "2020-06-04",
+          "url": "https://news.cision.com/se/magnolia-bostad-ab/r/magnolia-bostad-saljer-360-bostader-i-sundsvall,c3128242",
+          "supports": "Developer announces the first 360 dwellings stage, construction planned for autumn 2020, occupancy for spring 2023."
+        },
+        {
+          "date": "2021-10-21",
+          "url": "https://www.mynewsdesk.com/se/heimstaden/pressreleases/invigning-av-heimstadens-foersta-nybyggnationsprojekt-i-sundsvall-3138300",
+          "supports": "Owner describes Lastkajen (98 homes) planned for late 2022 and Pollaren (262 homes) planned for 2023."
+        },
+        {
+          "date": "2025-02",
+          "url": "https://heimstaden.com/app/uploads/2025/02/Sundsvall.pdf",
+          "supports": "Owner property list maps Lastkajen 1 and Pollaren 1 to street addresses."
+        }
+      ],
+      "evidence_gaps": [
+        "Current applicable protection boundaries and exact revocation extent still require decision-level verification; waterfront proximity or a coarse protection polygon is insufficient.",
+        "No building permit conditions or exemption decision has been verified for these exact objects.",
+        "Other site work outside the declared review bounds is unscored."
+      ],
+      "plan_evidence": {
+        "retrieved": "2026-09-22",
+        "wfs_type": "SundsvallsKommun:DetaljplanGallande_yta",
+        "query_bounds_3006": [
+          619735,
+          6920130,
+          619815,
+          6920260
+        ],
+        "exact_reference_intersection_fractions": {
+          "northern_block": {
+            "DP376": 0.142,
+            "DP486": 0.858,
+            "DP550": 0
+          },
+          "southern_block": {
+            "DP376": 0.126,
+            "DP486": 0.874,
+            "DP550": 0
+          }
+        },
+        "geometry_limit": "Approximate annotation regions, not surveyed parcel or building footprints. Bbox search alone also returned DP550, which does not intersect either reference region.",
+        "documents": [
+          {
+            "url": "https://karta.sundsvall.se/Detaljplan/SkannadHandling/2281K-DP-376.pdf",
+            "pdf_page": 68,
+            "pdf_pages": 74,
+            "date": "2011-04-18",
+            "reference": "402-1309-11",
+            "supports": "County opinion refers to its 2011-04-12 order revoking shore protection within the plan. Page visually inspected."
+          },
+          {
+            "url": "https://karta.sundsvall.se/Detaljplan/SkannadHandling/2281K-DP-486.pdf",
+            "pdf_pages": 56,
+            "reviewed_pages": [
+              5,
+              22,
+              50
+            ],
+            "supports": "Page 5 legend a2 denotes revoked shore protection; page 22 (printed16, 2018-10-15, Dnr2014-01030) gives reasoning; page50 (printed3, 2018-10-11, SBN2014-01030) records county comments and reduced water-area revocation. Pages visually inspected."
+          }
+        ],
+        "interpretation": "Waterfront construction is a useful legal-escalation control: plan-specific revocations can contradict broad protection-layer screening. Verify current exact boundaries and the applicable adopted decision before a legal conclusion."
+      },
+      "demo_analysis_params": {
+        "backend": "vision",
+        "area": "POLYGON((153391.665 6920726.179,153641.570 6920717.478,153648.531 6920917.402,153398.626 6920926.103,153391.665 6920726.179))",
+        "concepts": [
+          "building"
+        ],
+        "collection_a": "Lantmateriet:Orto2019_wms",
+        "collection_b": "Lantmateriet:Orto2023_wms",
+        "table_name": "demo_norra_kajen",
+        "gsd": 0.25,
+        "min_area_m2": 1
+      },
+      "demo_grid_note": "MCP uses its production tile grid over this area. Use the file-based runner to reproduce the exact frozen tile windows and scoring; geometry transformation can shift the production grid."
+    },
+    {
+      "id": "residential_control",
+      "title": "Different-date residential roofs and vegetation control",
+      "vintages": {
+        "a": "Lantmateriet:Orto2019_wms",
+        "b": "Lantmateriet:Orto2023_wms"
+      },
+      "windows_3006": [
+        [
+          620010,
+          6920440,
+          620210,
+          6920640
+        ]
+      ],
+      "evaluation_bounds_3006": [
+        620010,
+        6920440,
+        620210,
+        6920640
+      ],
+      "expected": [],
+      "split": "held_out_control",
+      "demo_cases": [
+        1
+      ],
+      "ground_truth": "Broad comparison shows stable major residential building forms; shadows, tree crowns and parked vehicles differ. Any proposed change requires manual inspection."
+    },
+    {
+      "id": "sports_control",
+      "title": "Different-date sports-surface control",
+      "vintages": {
+        "a": "Lantmateriet:Orto2019_wms",
+        "b": "Lantmateriet:Orto2023_wms"
+      },
+      "windows_3006": [
+        [
+          619500,
+          6921850,
+          619700,
+          6922050
+        ]
+      ],
+      "evaluation_bounds_3006": [
+        619500,
+        6921850,
+        619700,
+        6922050
+      ],
+      "expected": [],
+      "split": "held_out_control",
+      "demo_cases": [
+        1
+      ],
+      "ground_truth": "Sports pitches/paint/season differ; no major building change is visible in this crop. Designed to detect court/vegetation false positives."
+    },
+    {
+      "id": "identical_control",
+      "title": "Identical-image construction-site control",
+      "vintages": {
+        "a": "Lantmateriet:Orto2023_wms",
+        "b": "Lantmateriet:Orto2023_wms"
+      },
+      "windows_3006": [
+        [
+          619700,
+          6920100,
+          619900,
+          6920300
+        ]
+      ],
+      "evaluation_bounds_3006": [
+        619700,
+        6920100,
+        619900,
+        6920300
+      ],
+      "expected": [],
+      "split": "held_out_control",
+      "demo_cases": [
+        1,
+        3,
+        7
+      ],
+      "ground_truth": "Exact same cached PNG bytes for both vintages. Hallucination control, not a substitute for different-date controls."
+    }
+  ],
+  "scoring_revision": "Direction labels tightened after independent scoring review; frozen spatial reference bounds, model prompt and inference outputs were not changed. Spatial hits and semantic type mismatches are reported separately.",
+  "demo_workflows": [
+    {
+      "case": 1,
+      "site": "baldershallen",
+      "prompt_sv": "Jämför ortofoton 2019 och 2023 för Baldershallen. Visa förändringskandidater, källor, tidsintervall och misslyckade bildrutor. Kontrollera dem mot bilderna och sök relevanta lovhandlingar. Dra ingen slutsats om olovligt byggande utifrån en bildförändring."
+    },
+    {
+      "case": 3,
+      "site": "baldershallen",
+      "prompt_sv": "Utgå från förändringskandidaterna för Baldershallen och ärende BYGG2021-000790 på HAGA 4:51. Identifiera situationsplanens godkända version och sida innan läge eller mått jämförs. Om ritningen saknas, redovisa exakt vilket underlag som behövs. Påstå ingen avvikelse från lov utan det underlaget."
+    },
+    {
+      "case": 7,
+      "site": "norra_kajen",
+      "prompt_sv": "Granska de nya byggnaderna på Norra kajen mot aktuellt strandskydd och detaljplanerna DP376 och DP486. Gör riktig geometrisk skärning, inte bara bbox-sökning. Kontrollera upphävande och rätt beslutsversion. Visa källor, kartkandidater och kvarstående frågor; läge vid vattnet bevisar inte att strandskydd gäller."
+    }
+  ]
+}
