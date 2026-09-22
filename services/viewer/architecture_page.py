@@ -53,7 +53,7 @@ NODES = [
      [("Connection", "A private Unix socket and server-side token connect the viewer to the controller."),
       ("Scope", "Only configured service actions are accepted; the viewer does not receive the Docker socket."),
       ("Audit", "Service operations have a maintenance history. Live health belongs on the Services page.")], "services/viewer/service_admin.py"),
-    ("model", (956, 266), "model", "Gemma via OpenRouter", "DeepInfra Turbo · paid",
+    ("model", (956, 266), "model", "Gemma", "DeepInfra Turbo · paid",
      "Two independent callers use the same external model: Eneo for conversation and the geodata worker for paired-image change detection. They do not share a conversation or context window.",
      [("Model", "google/gemma-4-31b-it, pinned to deepinfra/turbo with provider fallbacks disabled."),
       ("Chat path", "Eneo sends conversation and selected tool-result context."),
