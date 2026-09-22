@@ -10,9 +10,9 @@ op='status'. Schema, guidance and validator for a processor live side by side
 in this module so they cannot drift apart (the docstring-vs-code drift that
 bit the old load(op='change_detect') English-only concepts note).
 
-Processors write their results as LAYERS in the caller's workspace — the
-boundary contract with the rest of the surface: read with query, style with
-layer, show with map. Jobs ride the same app.jobs queue as ingest/harvest;
+Processors return workspace-scoped findings or layers. Spatial layers can be
+read with query, styled with layer and shown with map; document findings carry
+page/source references. Jobs ride the same app.jobs queue as ingest/harvest;
 kinds are unchanged (the worker is untouched by the tool-surface move).
 """
 
@@ -20,6 +20,7 @@ from psycopg import sql as pgsql
 
 import db
 import job_ops
+import inspection_ops
 import sessions
 import sqlguard
 
@@ -318,6 +319,7 @@ def _run_change_detect_params(workspace_id: str, params: dict) -> dict:
 # One entry per processor: constant tool surface, growth happens here.
 
 REGISTRY = {
+    "inspect": inspection_ops.PROCESSOR,
     "change_detect": {
         "title": "Orthophoto change detection (SAM3 or Gemma)",
         "summary": "Where did concepts appear/disappear/change between two imagery "

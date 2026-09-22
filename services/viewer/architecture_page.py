@@ -56,7 +56,7 @@ NODES = [
       ("Scope", "Only configured service actions are accepted; the viewer does not receive the Docker socket."),
       ("Audit", "Service operations have a maintenance history. Live health belongs on the Services page.")], "services/viewer/service_admin.py"),
     ("model", (956, 266), "model", "Gemma", "DeepInfra Turbo · paid",
-     "Two independent callers use the same external model: Eneo for conversation and the geodata worker for paired-image change detection. They do not share a conversation or context window.",
+     "Two independent callers use the same external model: Eneo for conversation and the geodata worker for change detection, PDF/image inspection and OCR. They do not share a conversation or context window.",
      [("Model", "google/gemma-4-31b-it, pinned to deepinfra/turbo with provider fallbacks disabled."),
       ("Chat path", "Eneo sends conversation and selected tool-result context."),
       ("Image path", "The worker sends a separate before/after crop pair per request, with detail=high and up to 16,384 output tokens."),
@@ -71,6 +71,7 @@ NODES = [
      [("Queue", "One geodata job runs at a time in this deployment; queued work survives an MCP reconnect."),
       ("Gemma default", "800-pixel crop pairs, 50% overlap and four concurrent model requests within a job. Results are approximate review boxes."),
       ("SAM3 option", "backend=\"sam3\" sends each vintage to the local segmenter, then compares its masks in PostGIS."),
+      ("Documents", "inspect reads public PDFs and images with Gemma and returns cited page findings. PDF ingestion uses the same extraction pipeline and OCRs pages with little native text."),
       ("Embeddings", "Local EmbeddingGemma-300M produces 256-dimensional vectors through /embed. Its weights are cached in a persistent volume.")], "services/worker/jobs.py"),
     ("database", (704, 438), "data", "Geodata database", "PostgreSQL · PostGIS · pgvector",
      "This is the durable centre of the geodata system: searchable metadata, shared source layers, owned workspace results, job state, map specifications and provenance.",
@@ -171,7 +172,7 @@ FLOWS = {
 TOOLS = [("workspace", "Choose and manage owned workspaces"), ("search", "Find catalog entries and document passages"),
          ("load", "Register sources and ingest data"), ("query", "Read-only spatial SQL"),
          ("layer", "Create and style derived workspace layers"), ("map", "Save a map and return its URL"),
-         ("analyze", "Queue Gemma or SAM3 change detection"), ("export", "Build or retrieve a GIS download")]
+         ("analyze", "Inspect PDFs/images or queue Gemma/SAM3 change detection"), ("export", "Build or retrieve a GIS download")]
 
 
 def content(lang):

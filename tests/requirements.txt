@@ -1,3 +1,5 @@
 -r ../services/mcp/requirements.txt
 -r ../services/viewer/requirements.txt
 pytest>=8,<10
+pdfplumber>=0.11,<1
+reportlab>=4,<5

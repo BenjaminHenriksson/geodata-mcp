@@ -231,8 +231,11 @@ Single Python process, two responsibilities:
    - `ingest_ogcapi {dataset_id, target_schema, table_name}` — like ingest_wfs via GDAL's OAPIF
      driver (`OAPIF:<url>`, `OGR_OAPIF_PAGE_SIZE 1000`).
    - `ingest_file {path|url, table_name, target_schema}` — same via ogr2ogr from GDAL-readable file.
-   - `ingest_pdf {dataset_id|url, title}` — download, pdfplumber text per page, ~1200-char chunks
-     with 150 overlap, insert doc.documents + doc.chunks, embed chunks (task `document`).
+   - `ingest_pdf {dataset_id|url, title}` — download, native PDF text/tables with Gemma OCR
+     for pages with fewer than 200 extracted characters, ~1200-char chunks with 150 overlap,
+     insert doc.documents + doc.chunks, embed chunks (task `document`). Store OCR page numbers,
+     empty pages, uncertainties and model usage in document metadata. OCR failures fail the
+     job; documents without any readable text are not indexed. Shared extraction with inspect.
    - `ingest_text {dataset_id|url, title}` — download (20 MB cap), strip HTML to visible text
      (stdlib HTMLParser), chunk like ingest_pdf, insert doc.documents + doc.chunks, embed;
      re-ingesting a URL REPLACES its prior document row (delete-then-insert on source_url).
@@ -353,7 +356,7 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
 3. `analyze(op, id=None, params=None, job_id=None, timeout_s=None)` — registry of
    long-running analysis processors; the tool declaration is CONSTANT-SIZE regardless of how
    many processors exist (growth happens in `analysis_ops.REGISTRY`, not in the schema).
-   Results are always layers in the caller's ws schema.
+   Results are workspace-scoped document findings or spatial layers in the caller's ws schema.
    - `list {}` → `[{id, title, summary}]`.
    - `describe {id}` → full prose guidance + **JSON Schema** of params. Schema, guidance and
      validator live side by side in `analysis_ops.py` (single source of truth — the
@@ -361,10 +364,21 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
    - `run {id, params}` → validate (unknown/missing params are actionable errors citing the
      schema) and enqueue; waits up to 8 s then returns `{job_id, status, note}`.
    - `status {job_id, timeout_s=0}` → job row; `timeout_s` (≤ 25) long-polls. A done job's
-     reply names the result layers.
+     reply includes document findings or names the result layers.
    - `cancel {job_id}` → queued jobs only: `status='cancelled'` (worker claim takes
      `status='queued'`, so a cancelled job is never picked up — migration 005). Running jobs
      are not interruptible; done/error replies say so.
+   Processor `inspect` (job kind `inspect`): direct public HTTP(S) PDF/image `url`, optional
+   `question` and 1-based `pages` (all pages/frames by default). Uses the same PDF extraction
+   as ingestion and visually inspects every selected page with Gemma, including diagrams
+   on pages with native text. Returns `result_type=inspection`, source URL/hash, selected
+   page coverage, per-page answer/evidence/uncertainties/citation URL and cumulative model
+   usage. Does not create layers or automatically index the source. A failed/incomplete
+   model reply fails the job. Four HTTP calls at a time; 200 dpi rendering capped at 3,200
+   pixels per side; detail=high; 16,384 output tokens per page. Public downloads capped at
+   100 MiB with checked, IP-pinned redirects and no upstream credentials. No HTML rendering.
+   Provenance kind `inspect` references `job:<id>`; original source bytes are temporary.
+
    Processor `change_detect` (job kind `change_detect`): `area`: layer ref
    (`ref.x`/`ws_….x`, envelope of its extent), bbox string `'xmin,ymin,xmax,ymax'` (3014), or
    WKT 3014; must be a non-empty areal geometry ≤ **2.0 km²**. `concepts`: 1–6 ENGLISH

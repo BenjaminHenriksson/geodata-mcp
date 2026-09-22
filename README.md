@@ -54,7 +54,7 @@ results contain usable map and download URLs.
 | `query` | Read-only SQL with PostGIS, a 15-second timeout and a result-row cap |
 | `layer` | Create derived tables, update attributes, change styling and manage layers |
 | `map` | Save a map specification and return its viewer URL |
-| `analyze` | Discover, start, inspect and cancel analysis jobs; SAM3 or Gemma change detection |
+| `analyze` | Inspect PDFs/images with Gemma; run SAM3 or Gemma change detection; track analysis jobs |
 | `export` | Export GPKG, GeoJSON, CSV or Parquet with a provenance sidecar |
 
 A key owns named workspaces and one active workspace. Reconnecting preserves the
@@ -91,8 +91,32 @@ A zero-row layer can reflect an empty upstream source. Use
 SRIDs, extents and geometry validity.
 
 The worker uses EmbeddingGemma-300M with 256-dimensional embeddings. Search can
-fall back to trigram matching while the model is unavailable. Scanned PDFs
-without a text layer require OCR, which is not implemented.
+fall back to trigram matching while the model is unavailable. PDF ingestion keeps
+native text and tables and uses Gemma OCR for pages with fewer than 200 extracted
+characters. OCR text is indexed with page numbers, extraction method and uncertainty
+metadata. An OCR failure fails the job; an empty document is not indexed.
+
+For questions about a document or image without adding it to the search corpus:
+
+```python
+analyze(op="describe", id="inspect")
+analyze(op="run", id="inspect", params={
+    "url": "https://example.se/document.pdf",
+    "question": "Vilka byggdatum anges?",
+    "pages": [1, 3],  # optional; omit to inspect every page
+})
+analyze(op="status", job_id=123)
+```
+
+`inspect` accepts direct public PDF/raster-image URLs and returns per-page answers,
+evidence, uncertainties and source links in the workspace job history. PDF pages
+are visually inspected even when native text exists, so maps/diagrams are visible
+to the model. HTML pages are not rendered or crawled by this processor. Existing
+`load` PDF ingestion shares the extraction pipeline but indexes text for later search.
+Gemma receives high-detail rendered images (200 dpi, at most 3,200 pixels per side),
+with up to four concurrent requests and 16,384 output tokens per page. Actual visual
+tokens are provider-controlled. Downloads are limited to 100 MiB; pages are never
+silently skipped. These paths require the worker's `OPENROUTER_API_KEY` for OCR/vision.
 
 SAM3 runs as a separate service at `SAM3_URL`. See the
 [segmenter setup](services/segmenter/README.md) for MLX and GPU backends.

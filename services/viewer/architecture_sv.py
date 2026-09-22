@@ -44,7 +44,7 @@ NODES = {
          ("Omfattning", "Bara konfigurerade tjänsteåtgärder tillåts. Kartvisaren får ingen åtkomst till Docker-socketen."),
          ("Spårbarhet", "Tjänsteåtgärder sparas i en underhållslogg. Aktuell driftstatus finns på sidan Tjänster.")]),
     "model": ("Gemma", "DeepInfra Turbo · betald",
-        "Två oberoende anropare använder samma externa modell: Eneo för samtal och geodatatjänsten för förändringsanalys av bildpar. De delar varken samtal eller kontextfönster.",
+        "Två oberoende anropare använder samma externa modell: Eneo för samtal och geodatatjänsten för förändringsanalys, granskning av PDF:er/bilder och OCR. De delar varken samtal eller kontextfönster.",
         [("Modell", "google/gemma-4-31b-it, låst till deepinfra/turbo utan reservleverantörer."),
          ("Samtalsflöde", "Eneo skickar samtalet och utvalda verktygsresultat som kontext."),
          ("Bildflöde", "Jobbtjänsten skickar ett separat par av före- och efterutsnitt per anrop, med detail=high och upp till 16 384 utgående token."),
@@ -59,6 +59,7 @@ NODES = {
         [("Jobbkö", "Ett geodatajobb körs åt gången i den här installationen. Köade jobb finns kvar om MCP-anslutningen bryts."),
          ("Gemma som standard", "Bildpar på 800 pixlar, 50 % överlappning och fyra samtidiga modellanrop inom ett jobb. Resultaten är ungefärliga rutor för granskning."),
          ("SAM3 som alternativ", "backend=\"sam3\" skickar varje bildårgång till den lokala segmenteraren och jämför sedan maskerna i PostGIS."),
+         ("Dokument", "inspect läser offentliga PDF:er och bilder med Gemma och returnerar svar med sidhänvisningar. PDF-inläsning delar samma extrahering och använder OCR på sidor med lite inbäddad text."),
          ("Textvektorer", "Lokal EmbeddingGemma-300M skapar 256-dimensionella vektorer via /embed. Modellvikterna cachas på en beständig volym.")]),
     "database": ("Geodatabas", "PostgreSQL · PostGIS · pgvector",
         "Här finns geodatasystemets beständiga innehåll: sökbara metadata, gemensamma källager, arbetsyteresultat, jobbstatus, kartbeskrivningar och ursprungshistorik.",
@@ -146,4 +147,4 @@ FLOWS = {
 TOOLS = {"workspace": "Välj och hantera egna arbetsytor", "search": "Hitta katalogposter och dokumentavsnitt",
          "load": "Registrera källor och läs in data", "query": "Skrivskyddad rumslig SQL",
          "layer": "Skapa och utforma härledda lager i arbetsytan", "map": "Spara en karta och returnera dess länk",
-         "analyze": "Köa förändringsanalys med Gemma eller SAM3", "export": "Skapa eller hämta en GIS-export"}
+         "analyze": "Granska PDF:er/bilder eller köa förändringsanalys med Gemma/SAM3", "export": "Skapa eller hämta en GIS-export"}

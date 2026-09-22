@@ -1,0 +1,28 @@
+"""Inspection arguments shared by the MCP registry and worker."""
+from urllib.parse import urlsplit
+
+DEFAULT_QUESTION = "Describe this document or image, including its visible text and important visual details."
+
+
+def validate(params):
+    url = params.get("url")
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("url must be a direct HTTP(S) URL to a PDF or image")
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError:
+        raise ValueError("invalid URL") from None
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("url must be HTTP(S), without embedded credentials")
+    if port not in (None, 80, 443):
+        raise ValueError("inspection supports public web URLs on ports 80 and 443")
+    question = params.get("question", DEFAULT_QUESTION)
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError("question must be non-empty text")
+    pages = params.get("pages")
+    if pages is not None and (not isinstance(pages, list) or not pages or
+                             any(type(p) is not int or p < 1 for p in pages)):
+        raise ValueError("pages must be a non-empty list of 1-based page numbers")
+    return {"url": url.strip(), "question": question.strip(),
+            "pages": sorted(set(pages)) if pages is not None else None}

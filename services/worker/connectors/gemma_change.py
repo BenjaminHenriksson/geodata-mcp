@@ -10,11 +10,13 @@ import math
 import os
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
+from connectors import gemma_api
+
 import httpx
 
-MODEL = "google/gemma-4-31b-it"
-PROVIDER = "deepinfra/turbo"
-URL = "https://openrouter.ai/api/v1/chat/completions"
+MODEL = gemma_api.MODEL
+PROVIDER = gemma_api.PROVIDER
+URL = gemma_api.URL
 TILE_PX = 800
 OVERLAP_PX = 400
 CHANGE_CLASSES = {
@@ -28,9 +30,7 @@ WARNING = ("Gemma returns approximate review bounding boxes, not segmented footp
 
 
 def settings():
-    key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError("backend='gemma' requires OPENROUTER_API_KEY in the worker environment")
+    key = gemma_api.api_key()
     try:
         concurrency = int(os.environ.get("GEMMA_CONCURRENCY", "4"))
         if not 1 <= concurrency <= 8:
@@ -107,34 +107,12 @@ def parse_changes(content, concepts):
 
 
 def detect(client, key, pngs, concepts, collections, window):
-    """Stream to avoid proxy buffering; do not retain or log private reasoning."""
-    content = ""
-    usage = {}
-    finish = None
-    with client.stream("POST", URL, headers={"Authorization": f"Bearer {key}"},
-                       json=_request(pngs, concepts, collections, window)) as response:
-        if response.status_code != 200:
-            # Upstream bodies can contain request data. Keep job errors non-sensitive.
-            raise RuntimeError(f"Gemma/OpenRouter request failed (HTTP {response.status_code})")
-        for line in response.iter_lines():
-            if not line.startswith("data: ") or line[6:] == "[DONE]":
-                continue
-            try:
-                data = json.loads(line[6:])
-            except ValueError:
-                raise RuntimeError("Gemma/OpenRouter returned an invalid event stream") from None
-            if "error" in data:
-                raise RuntimeError("Gemma/OpenRouter returned an inference error")
-            if data.get("usage"):
-                usage = data["usage"]
-            for choice in data.get("choices", []):
-                content += choice.get("delta", {}).get("content") or ""
-                finish = choice.get("finish_reason") or finish
+    data, usage = gemma_api.stream_json(client, key, _request(pngs, concepts, collections, window))
     try:
-        changes = parse_changes(content, concepts) if finish == "stop" else None
+        changes = parse_changes(json.dumps(data), concepts) if data is not None else None
     except ValueError:
         changes = None
-    return changes, {k: usage.get(k, 0) for k in ("prompt_tokens", "completion_tokens", "cost")}
+    return changes, usage
 
 
 def candidate_rows(window, changes):

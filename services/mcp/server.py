@@ -168,7 +168,9 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
       'wms:<dataset id>' (WMTS renders in the MapLibre view), they are not ingestable.
     - op='ingest' {dataset_id, table_name?, target='ref'|'workspace'}: load a catalog dataset
       into PostGIS (vector via WFS/OGC-API/file → a table with geom SRID 3014; pdf/text
-      documents → extracted text chunks in doc.*). target='workspace' puts the table in your
+      documents → extracted text chunks in doc.*; scanned PDF pages use Gemma OCR).
+      For questions about PDF/image contents without indexing, use analyze's inspect processor.
+      target='workspace' puts the table in your
       private schema. Waits up to 8 s, then returns the job status either way; poll with
       op='status'.
     - op='inline' {rows, table_name, source, crs?}: synchronously insert rows you provide.
@@ -220,11 +222,13 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
 def analyze(op: str, id: str | None = None, params: dict | None = None,
             job_id: int | None = None, timeout_s: float | None = None,
             ctx: Context = None, workspace_id: str | None = None) -> dict:
-    """Run long-running analysis processors (model inference over imagery etc.).
+    """Inspect PDFs, scanned documents and images, or run geospatial image analysis.
 
-    Results land as LAYERS in your active workspace — read them with the query
-    tool, style with layer, show with map. Processors are a registry: discover
-    them here instead of reading a fixed list.
+    inspect reads a public PDF/image URL with Gemma and returns per-page findings,
+    OCR/visual evidence and source links. Use it to examine documents/images found
+    through internet search. change_detect writes spatial layers — read with query,
+    style with layer, show with map. Both persist results in workspace-scoped jobs.
+    Processors are a registry: discover their input schemas here.
 
     - op='list' {}: available processors — [{id, title, summary}].
     - op='describe' {id}: one processor's full guidance + JSON Schema of its params.
@@ -233,12 +237,12 @@ def analyze(op: str, id: str | None = None, params: dict | None = None,
       fast jobs come back finished). Runs typically take minutes.
     - op='status' {job_id, timeout_s?}: the job row (status queued|running|done|error|
       cancelled, result, error). timeout_s>0 long-polls up to 25 s. When done, the
-      result names the layers written.
+      result contains document findings or names the layers written.
     - op='cancel' {job_id}: cancel a QUEUED job. A running job cannot be interrupted —
       it finishes or errors on its own.
 
-    First processor: 'change_detect' — orthophoto change detection between two
-    imagery vintages, using Gemma by default or explicit backend='sam3'. Start with op='list'.
+    'inspect': PDF/image URL + optional question/pages. 'change_detect': orthophoto
+    change detection using Gemma by default or explicit backend='sam3'. Start with op='list'.
     workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:

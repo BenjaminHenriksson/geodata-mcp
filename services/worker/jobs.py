@@ -13,7 +13,7 @@ from psycopg.types.json import Json
 import dbutil
 import embedder
 import exporter
-from connectors import change_detect, files, ogcapi, pdf, stac, textdoc, wfs, wmts
+from connectors import change_detect, files, inspect_document, ogcapi, pdf, stac, textdoc, wfs, wmts
 
 log = logging.getLogger("worker.jobs")
 
@@ -37,6 +37,7 @@ HANDLERS = {
     "embed_catalog": embedder.embed_catalog,
     "export": exporter.export,
     "change_detect": change_detect.change_detect,
+    "inspect": inspect_document.inspect_document,
 }
 
 

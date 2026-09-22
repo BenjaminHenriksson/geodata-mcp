@@ -1,4 +1,4 @@
-"""PDF ingestion: download → pdfplumber text + tables per page → chunk →
+"""PDF ingestion: download → native text/tables or Gemma OCR per page → chunk →
 doc.documents + doc.chunks → embed chunks with the local model."""
 
 import bisect
@@ -6,6 +6,7 @@ import logging
 import os
 
 from connectors import files
+from connectors.visual_documents import extract
 from connectors.documents import store_document
 
 log = logging.getLogger("worker.pdf")
@@ -15,58 +16,6 @@ PDF_TIMEOUT = 60.0
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 150
 MIN_TEXT_CHARS = 200
-
-
-def _table_to_markdown(table) -> str:
-    """Render a pdfplumber table (list of rows of cells) as a markdown grid."""
-    rows = []
-    for raw_row in table or []:
-        cells = []
-        for cell in raw_row or []:
-            text = "" if cell is None else str(cell)
-            cells.append(text.replace("\n", " ").replace("|", "\\|").strip())
-        rows.append(cells)
-    rows = [r for r in rows if any(c for c in r)]
-    if not rows:
-        return ""
-    width = max(len(r) for r in rows)
-    rows = [r + [""] * (width - len(r)) for r in rows]
-    lines = ["| " + " | ".join(rows[0]) + " |",
-             "| " + " | ".join(["---"] * width) + " |"]
-    for row in rows[1:]:
-        lines.append("| " + " | ".join(row) + " |")
-    return "\n".join(lines)
-
-
-def _extract_pages(path: str):
-    """Returns (pages, empty_pages): pages = [(page_no, text)] with tables
-    appended to each page's text as markdown grids."""
-    import pdfplumber
-
-    pages = []
-    empty_pages = []
-    with pdfplumber.open(path) as pdf:
-        for number, page in enumerate(pdf.pages, start=1):
-            try:
-                text = page.extract_text() or ""
-            except Exception as exc:  # tolerate broken pages
-                log.warning("page %d: extract_text failed: %s", number, exc)
-                text = ""
-            parts = [text]
-            try:
-                tables = page.extract_tables() or []
-            except Exception as exc:
-                log.warning("page %d: extract_tables failed: %s", number, exc)
-                tables = []
-            for table in tables:
-                markdown = _table_to_markdown(table)
-                if markdown:
-                    parts.append(markdown)
-            page_text = "\n\n".join(p for p in parts if p.strip())
-            if not page_text.strip():
-                empty_pages.append(number)
-            pages.append((number, page_text))
-    return pages, empty_pages
 
 
 def _chunk_pages(pages, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
@@ -121,7 +70,7 @@ def ingest_pdf(conn, job) -> dict:
     try:
         size = files.download(url, tmp_path, PDF_DOWNLOAD_CAP, timeout=PDF_TIMEOUT)
         log.info("downloaded PDF %s (%d bytes)", url, size)
-        pages, empty_pages = _extract_pages(tmp_path)
+        extracted = extract(tmp_path)
     finally:
         if os.path.exists(tmp_path):
             try:
@@ -129,11 +78,17 @@ def ingest_pdf(conn, job) -> dict:
             except OSError:
                 pass
 
-    total_chars = sum(len(text) for _, text in pages)
+    pages = [(page["page"], page["text"]) for page in extracted["pages"]]
     chunks = _chunk_pages(pages)
-
-    result = store_document(conn, payload, chunks, pages=len(pages),
-                            meta={"empty_pages": empty_pages})
-    if total_chars < MIN_TEXT_CHARS:
-        result["warning"] = "scanned PDF — no text layer; OCR model deferred by decision"
+    if not chunks:
+        raise ValueError("No readable text found in this PDF, including OCR; no empty document was indexed")
+    meta = {"empty_pages": [n for n, text in pages if not text.strip()],
+            "ocr_pages": [p["page"] for p in extracted["pages"] if p["text_method"] == "gemma_ocr"],
+            "page_uncertainties": [{"page": p["page"], "uncertainties": p["uncertainties"]}
+                                   for p in extracted["pages"] if p["uncertainties"]],
+            "model": extracted["model"]}
+    result = store_document(conn, payload, chunks, pages=extracted["total_pages"], meta=meta)
+    result.update(ocr_pages=meta["ocr_pages"], empty_pages=meta["empty_pages"])
+    if meta["page_uncertainties"]:
+        result["warnings"] = meta["page_uncertainties"]
     return result

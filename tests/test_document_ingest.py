@@ -33,7 +33,11 @@ def test_ingestion_preserves_documents_and_embedding_progress(
 
     monkeypatch.setattr(module.files, "download", download)
     monkeypatch.setattr(module, "_chunk_pages", lambda *a, **kw: chunks)
-    monkeypatch.setattr(pdf, "_extract_pages", lambda _: ([(1, content), (2, "")], [2]))
+    monkeypatch.setattr(pdf, "extract", lambda _: {
+        "total_pages": 2, "model": None, "pages": [
+            {"page": 1, "text": content, "text_method": "native", "uncertainties": []},
+            {"page": 2, "text": "", "text_method": "native", "uncertainties": []},
+        ]})
     batches = []
 
     def embed(texts, task):
@@ -46,6 +50,12 @@ def test_ingestion_preserves_documents_and_embedding_progress(
 
     monkeypatch.setattr(embedder, "embed_texts", embed)
     job = {"id": f"regression-{kind}", "payload": {"url": "https://example.test/doc"}}
+    if kind == "pdf" and not count:
+        with pytest.raises(ValueError, match="no empty document"):
+            pdf.ingest_pdf(conn, job)
+        cur.execute.assert_not_called()
+        assert all(not Path(path).exists() for path in downloads)
+        return
     if fail_batch:
         with pytest.raises(RuntimeError, match="embedding unavailable"):
             getattr(module, f"ingest_{kind}")(conn, job)
@@ -54,11 +64,10 @@ def test_ingestion_preserves_documents_and_embedding_progress(
         expected = {"document_id": "7", "chunks": count}
         if kind == "text":
             expected.update(chars=len(content.strip()), format="text")
+        else:
+            expected.update(ocr_pages=[], empty_pages=[2])
         if not count:
-            expected["warning"] = (
-                "scanned PDF — no text layer; OCR model deferred by decision"
-                if kind == "pdf" else "very little visible text extracted from this page"
-            )
+            expected["warning"] = "very little visible text extracted from this page"
         assert result == expected
 
     calls = [(" ".join(c.args[0].split()), c.args[1]) for c in cur.execute.call_args_list]
@@ -67,7 +76,7 @@ def test_ingestion_preserves_documents_and_embedding_progress(
     document = next(p for sql, p in calls if sql.startswith("INSERT INTO doc.documents"))
     assert document[:3] == (None, job["payload"]["url"], job["payload"]["url"])
     assert document[-1].obj == (
-        {"empty_pages": [2]} if kind == "pdf"
+        {"empty_pages": [2], "ocr_pages": [], "page_uncertainties": [], "model": None} if kind == "pdf"
         else {"format": "text", "chars": len(content.strip())}
     )
     if kind == "pdf":
