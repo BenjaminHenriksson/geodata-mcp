@@ -370,11 +370,15 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
      `status='queued'`, so a cancelled job is never picked up — migration 005). Running jobs
      are not interruptible; done/error replies say so.
    Processor `inspect` (job kind `inspect`): direct public HTTP(S) PDF/image `url`, optional
-   `question` and 1-based `pages` (all pages/frames by default). Uses the same PDF extraction
-   as ingestion and visually inspects every selected page with Gemma, including diagrams
-   on pages with native text. Returns `result_type=inspection`, source URL/hash, selected
-   page coverage, per-page answer/evidence/uncertainties/citation URL and cumulative model
-   usage. Does not create layers or automatically index the source. A failed/incomplete
+   `mode` (`answer` default, or `transcribe`), `question` (answer mode only) and 1-based
+   `pages` (all pages/frames by default). `transcribe` uses the shared ingestion extractor:
+   native PDF text/tables where available, OCR for scans/images, with no question answering.
+   Returns `result_type=transcription` and per-page text/text_method/uncertainties/citation URL.
+   `answer` visually inspects every selected page with Gemma, including diagrams on pages
+   with native text; returns `result_type=inspection` and per-page answer/evidence/
+   uncertainties/citation URL. Both return mode, source URL/hash, selected page coverage
+   and cumulative model usage. Results are persisted: `status` retrieves the same result
+   without repeating inference. Does not create layers or index the source. A failed/incomplete
    model reply fails the job. Four HTTP calls at a time; 200 dpi rendering capped at 3,200
    pixels per side; detail=high; 16,384 output tokens per page. Public downloads capped at
    100 MiB with checked, IP-pinned redirects and no upstream credentials. No HTML rendering.

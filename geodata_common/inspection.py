@@ -17,12 +17,21 @@ def validate(params):
         raise ValueError("url must be HTTP(S), without embedded credentials")
     if port not in (None, 80, 443):
         raise ValueError("inspection supports public web URLs on ports 80 and 443")
-    question = params.get("question", DEFAULT_QUESTION)
-    if not isinstance(question, str) or not question.strip():
-        raise ValueError("question must be non-empty text")
+    mode = params.get("mode", "answer")
+    if mode not in ("answer", "transcribe"):
+        raise ValueError("mode must be 'answer' or 'transcribe'")
+    if mode == "transcribe":
+        if params.get("question") is not None:
+            raise ValueError("transcribe returns full text without answering a question; omit question or use mode='answer'")
+        question = None
+    else:
+        question = params.get("question", DEFAULT_QUESTION)
+        if not isinstance(question, str) or not question.strip():
+            raise ValueError("question must be non-empty text")
+        question = question.strip()
     pages = params.get("pages")
     if pages is not None and (not isinstance(pages, list) or not pages or
                              any(type(p) is not int or p < 1 for p in pages)):
         raise ValueError("pages must be a non-empty list of 1-based page numbers")
-    return {"url": url.strip(), "question": question.strip(),
+    return {"url": url.strip(), "mode": mode, "question": question,
             "pages": sorted(set(pages)) if pages is not None else None}

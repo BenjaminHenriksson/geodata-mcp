@@ -120,11 +120,52 @@ def test_image_inspection_returns_citations_and_provenance(monkeypatch, tmp_path
     assert provenance.call_args.kwargs["workspace_id"] == "owned-workspace"
 
 
+def test_transcription_returns_complete_selected_pages_without_answering(monkeypatch, mixed_pdf):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture")
+    call = Mock(side_effect=lambda c, k, r: model_reply(r))
+    monkeypatch.setattr(gemma_api, "stream_json", call)
+    monkeypatch.setattr(public_download, "download", lambda url, path: (
+        url, path.write_bytes(mixed_pdf.read_bytes())))
+    monkeypatch.setattr(inspect_document.dbutil, "insert_provenance", Mock())
+    result = inspect_document.inspect_document(MagicMock(), {
+        "id": 12, "workspace_id": "owned", "payload": {
+            "url": "https://example.test/document.pdf", "mode": "transcribe"}})
+    assert result["result_type"] == "transcription"
+    assert result["selected_pages"] == [1, 2]
+    assert call.call_count == 1  # Native page needs neither OCR nor an answer call.
+    first, second = result["pages"]
+    assert first["text"].count("opening date of 2018") == 10
+    assert first["text_method"] == "native"
+    assert second["text"] == "Byggstart 2019. Invigning 2022."
+    assert second["text_method"] == "gemma_ocr"
+    assert "question" not in result
+    assert all("answer" not in p and "evidence" not in p for p in result["pages"])
+    assert second["source_url"] == "https://example.test/document.pdf#page=2"
+
+
+def test_image_transcription_returns_text_instead_of_visual_summary(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fixture")
+    monkeypatch.setattr(gemma_api, "stream_json", lambda c, k, r: model_reply(r))
+    def download(url, path):
+        Image.new("RGB", (300, 200), "white").save(path, format="PNG")
+        return url, path.stat().st_size
+    monkeypatch.setattr(public_download, "download", download)
+    monkeypatch.setattr(inspect_document.dbutil, "insert_provenance", Mock())
+    result = inspect_document.inspect_document(MagicMock(), {
+        "id": 13, "workspace_id": "owned", "payload": {
+            "url": "https://example.test/image.png", "mode": "transcribe"}})
+    assert result["pages"][0]["text"] == "Byggstart 2019. Invigning 2022."
+    assert result["pages"][0]["source_url"] == "https://example.test/image.png"
+    assert "answer" not in result["pages"][0]
+
+
 @pytest.mark.parametrize("params", [
     {"url": "file:///etc/passwd"}, {"url": "https://user:password@x.test/a"},
     {"url": "http://x.test:8100/image"}, {"url": "https://x.test/a", "pages": [True]},
     {"url": "https://x.test/a", "pages": [0]}, {"url": "https://x.test/a", "question": ""},
     {"url": "https://x.test/a", "unknown": 1},
+    {"url": "https://x.test/a", "mode": "summarize"},
+    {"url": "https://x.test/a", "mode": "transcribe", "question": "What changed?"},
 ])
 def test_bad_inspection_arguments_do_not_enqueue(monkeypatch, params):
     submit = Mock()

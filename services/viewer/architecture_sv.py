@@ -59,7 +59,7 @@ NODES = {
         [("Jobbkö", "Den nuvarande jobbtjänsten bearbetar ett köat geodatajobb åt gången. Köade jobb finns kvar om MCP-anslutningen bryts."),
          ("Gemma som standard", "Bildpar på 800 pixlar, 50 % överlappning och fyra samtidiga modellanrop inom ett jobb. Resultaten är ungefärliga rutor för granskning."),
          ("SAM3 som alternativ", "backend=\"sam3\" skickar varje bildårgång till den lokala segmenteraren och jämför sedan maskerna i PostGIS."),
-         ("Dokument", "inspect läser offentliga PDF:er och bilder med Gemma och returnerar svar med sidhänvisningar. PDF-inläsning delar samma extrahering och använder OCR på sidor med lite inbäddad text."),
+         ("Dokument", "inspect har två lägen: transcribe returnerar sidornas fullständiga text; answer ställer frågor till Gemma om de ursprungliga sidbilderna. Båda ger sidhänvisningar. PDF-inläsning delar extrahering och OCR och håller varje indexerat textavsnitt inom sin källsida."),
          ("Textvektorer", "Lokal EmbeddingGemma-300M skapar 256-dimensionella vektorer via /embed. Modellvikterna cachas på en beständig volym.")]),
     "database": ("Geodatabas", "PostgreSQL · PostGIS · pgvector",
         "Här finns geodatasystemets beständiga innehåll: sökbara metadata, gemensamma källager, arbetsyteresultat, jobbstatus, kartbeskrivningar och ursprungshistorik.",

@@ -224,11 +224,13 @@ def analyze(op: Literal["list", "describe", "run", "status", "cancel"],
             id: str | None = None, params: dict | None = None,
             job_id: int | None = None, timeout_s: float | None = None,
             ctx: Context = None, workspace_id: str | None = None) -> dict:
-    """Inspect PDFs, scanned documents and images, or run geospatial image analysis.
+    """Transcribe or inspect PDFs/images, or run geospatial image analysis.
 
-    Use op='run', id='inspect', params={'url': ..., 'question': ...} to inspect
-    a public PDF/image URL with Gemma and return per-page findings,
-    OCR/visual evidence and source links. Use it to examine documents/images found
+    Use op='run', id='inspect', params={'url': ..., 'mode': 'transcribe'} to fetch
+    full page text (native extraction or OCR), without a summary, for you to reason
+    over. Use mode='answer' with question to ask Gemma about the original page images,
+    including diagrams or unclear text. Returns per-page text/findings and source
+    links. Use it to examine documents/images found
     through internet search. change_detect writes spatial layers — read with query,
     style with layer, show with map. Both persist results in workspace-scoped jobs.
     Processors are a registry: discover their input schemas here.
@@ -245,7 +247,7 @@ def analyze(op: Literal["list", "describe", "run", "status", "cancel"],
     - op='cancel' {job_id}: cancel a QUEUED job. A running job cannot be interrupted —
       it finishes or errors on its own.
 
-    'inspect': PDF/image URL + optional question/pages. 'change_detect': orthophoto
+    'inspect': PDF/image URL + mode (transcribe|answer), optional question/pages. 'change_detect': orthophoto
     change detection using Gemma by default or explicit backend='sam3'. Start with op='list'.
     workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """

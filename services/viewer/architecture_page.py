@@ -71,7 +71,7 @@ NODES = [
      [("Queue", "The current worker implementation processes one queued geodata job at a time; queued work survives an MCP reconnect."),
       ("Gemma default", "800-pixel crop pairs, 50% overlap and four concurrent model requests within a job. Results are approximate review boxes."),
       ("SAM3 option", "backend=\"sam3\" sends each vintage to the local segmenter, then compares its masks in PostGIS."),
-      ("Documents", "inspect reads public PDFs and images with Gemma and returns cited page findings. PDF ingestion uses the same extraction pipeline and OCRs pages with little native text."),
+      ("Documents", "inspect offers two modes: transcribe returns full page text; answer asks Gemma about the original page images. Both return page citations. PDF ingestion shares extraction and OCR, keeping indexed chunks within their source page."),
       ("Embeddings", "Local EmbeddingGemma-300M produces 256-dimensional vectors through /embed. Its weights are cached in a persistent volume.")], "services/worker/jobs.py"),
     ("database", (704, 438), "data", "Geodata database", "PostgreSQL · PostGIS · pgvector",
      "This is the durable centre of the geodata system: searchable metadata, shared source layers, owned workspace results, job state, map specifications and provenance.",

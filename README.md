@@ -96,23 +96,36 @@ native text and tables and uses Gemma OCR for pages with fewer than 200 extracte
 characters. OCR text is indexed with page numbers, extraction method and uncertainty
 metadata. An OCR failure fails the job; an empty document is not indexed.
 
-For questions about a document or image without adding it to the search corpus:
+To read a document or image without adding it to the search corpus, choose full
+transcription or visual question answering:
 
 ```python
 analyze(op="describe", id="inspect")
 analyze(op="run", id="inspect", params={
     "url": "https://example.se/document.pdf",
+    "mode": "transcribe",  # full original-language text, no summary or question
+})
+analyze(op="status", job_id=123)  # saved transcription; repeat to fetch it again
+
+analyze(op="run", id="inspect", params={
+    "url": "https://example.se/document.pdf",
+    "mode": "answer",  # default; examines the original pages visually
     "question": "Vilka byggdatum anges?",
     "pages": [1, 3],  # optional; omit to inspect every page
 })
-analyze(op="status", job_id=123)
+analyze(op="status", job_id=124)
 ```
 
-`inspect` accepts direct public PDF/raster-image URLs and returns per-page answers,
-evidence, uncertainties and source links in the workspace job history. PDF pages
-are visually inspected even when native text exists, so maps/diagrams are visible
-to the model. HTML pages are not rendered or crawled by this processor. Existing
-`load` PDF ingestion shares the extraction pipeline but indexes text for later search.
+`inspect` accepts direct public PDF/raster-image URLs. Transcription returns full
+page text, extraction method and uncertainty notes: native PDF text/tables where
+available, Gemma OCR for scans/images. It preserves the original language and does
+not summarize or answer a question. The assistant can reason over that text itself.
+Answer mode returns per-page answers and visual evidence from the original rendered
+pages, including diagrams on PDFs with native text. Both include page source links
+and persist in workspace job history; retrieving a completed job makes no new model
+call. OCR can still misread characters; answer mode can inspect ambiguous source
+text or visuals. HTML pages are not rendered or crawled. `load` shares extraction
+and indexes text for search, with chunks and overlap confined to each PDF page.
 Gemma receives high-detail rendered images (200 dpi, at most 3,200 pixels per side),
 with up to four concurrent requests and 16,384 output tokens per page. Actual visual
 tokens are provider-controlled. Downloads are limited to 100 MiB; pages are never
