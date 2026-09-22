@@ -98,10 +98,10 @@ SAM3 runs as a separate service at `SAM3_URL`. See the
 Change detection produces candidate and coverage layers: missing coverage is
 not evidence of no change. Inspect the imagery before interpreting candidates.
 
-Select `backend: "gemma"` in `analyze(op="run", id="change_detect", params={...})`
-to compare paired image crops with Gemma 4 31B through OpenRouter DeepInfra Turbo.
+`analyze(op="run", id="change_detect", params={...})` compares paired image crops
+with Gemma 4 31B through OpenRouter DeepInfra Turbo by default (`backend: "gemma"`).
 Set `OPENROUTER_API_KEY` on the worker; `GEMMA_CONCURRENCY` defaults to four requests.
-SAM3 remains the default. Omit `method` to select the matching comparison method.
+Select `backend: "sam3"` for SAM3. Omit `method` to select the matching comparison method.
 Gemma uses 800-pixel crops with 50% overlap and `detail: "high"`; the provider
 controls visual token allocation. It returns approximate bounding boxes with
 evidence and qualitative confidence, usable in the existing map/export flow.

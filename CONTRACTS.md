@@ -246,7 +246,7 @@ Single Python process, two responsibilities:
      CSV gets `-lco GEOMETRY=AS_WKT`. GeoJSON in 4326 (`-t_srs EPSG:4326`), others native 3014.
    - `change_detect {area_wkt_3014, table_name, target_schema, concepts, collection_a,
      collection_b, threshold, min_area_m2, method, backend}` — orthophoto change detection.
-     Default `backend='sam3'`, method `mask_compare`: STAC item search over the area per
+     Opt-in `backend='sam3'`, method `mask_compare`: STAC item search over the area per
      collection (public endpoints; items filtered to `spektraltyp in (rgb, rgbi)`), window
      grid in EPSG:3006 at 1008 px / 96 px overlap at the pair's coarsest GSD (≤ 128 tiles),
      per-vintage `gdal.BuildVRT` over `/vsicurl/` COG hrefs (Basic auth via GDAL config,
@@ -264,7 +264,7 @@ Single Python process, two responsibilities:
      Existing output tables are dropped only when this job's own provenance row claims
      them (attempt-2 rerun); otherwise the job refuses. The output transaction runs with
      `SET LOCAL statement_timeout='15min'` (role default 120 s is too small for the diff SQL).
-     Alternative `backend='gemma'`, method `vision_compare`: shared STAC/WMS imagery
+     Default `backend='gemma'`, method `vision_compare`: shared STAC/WMS imagery
      reader, paired 800 px crops with 400 px overlap, four concurrent OpenRouter calls
      (`GEMMA_CONCURRENCY`, 1–8), Gemma 4 31B pinned to `deepinfra/turbo`, no fallbacks.
      `OPENROUTER_API_KEY` is worker-only. Uses `detail='high'` and 16,384 output tokens;
@@ -372,7 +372,7 @@ Docstrings must be agent-facing and include SQL guidance (PostGIS 3.5, `geom` co
    `catalog.datasets.external_id` values from a `stac` or `wms` source; must exist and
    differ; `gsd` (0.05–2.0, default 0.25) sets WMS processing resolution. Refuses if
    `{table}` or `{table}_coverage` already exists. `ensure_ws_schema` before enqueue.
-   `backend` is `sam3` (default) or `gemma`; omit `method` to choose automatically,
+   `backend` is `gemma` (default) or `sam3`; omit `method` to choose automatically,
    or explicitly match `mask_compare` / `vision_compare` to the backend.
    Guidance frames results as screening candidates, never assertions.
 4. `query(sql, limit=500)` — single statement, must start with SELECT/WITH/EXPLAIN/SHOW/VALUES/TABLE

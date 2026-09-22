@@ -82,10 +82,10 @@ def _run_change_detect(workspace_id: str, area: str | None, concepts: list | Non
                        collection_a: str | None, collection_b: str | None,
                        table_name: str | None, threshold: float | None,
                        min_area_m2: float | None, method: str | None,
-                       gsd: float | None = None, backend: str = "sam3") -> dict:
+                       gsd: float | None = None, backend: str = "gemma") -> dict:
     """Validate and enqueue orthophoto change detection (worker does the rest)."""
     if backend not in ("sam3", "gemma"):
-        return {"error": "backend must be 'sam3' (default) or 'gemma'"}
+        return {"error": "backend must be 'gemma' (default) or 'sam3'"}
     if not isinstance(concepts, list) or not 1 <= len(concepts) <= 6:
         return {"error": "concepts must be a list of 1-6 ENGLISH noun phrases, "
                          "e.g. ['building', 'swimming pool', 'storage yard']"}
@@ -193,7 +193,7 @@ _CHANGE_DETECT_SCHEMA = {
     "additionalProperties": False,
     "properties": {
         "backend": {
-            "type": "string", "enum": ["sam3", "gemma"], "default": "sam3",
+            "type": "string", "enum": ["gemma", "sam3"], "default": "gemma",
             "description": "sam3: local segmentation. gemma: paired image crops sent to "
                            "Gemma 4 31B via OpenRouter DeepInfra Turbo, returning approximate "
                            "bounding boxes. Requires worker OPENROUTER_API_KEY; no SAM3 needed.",
@@ -253,8 +253,8 @@ _CHANGE_DETECT_SCHEMA = {
 }
 
 _CHANGE_DETECT_GUIDE = """\
-Compare two orthophoto vintages with backend='sam3' (default, concept segmentation)
-or backend='gemma' (Gemma 4 31B on OpenRouter DeepInfra Turbo, paired image crops).
+Compare two orthophoto vintages with backend='gemma' (default, Gemma 4 31B on
+OpenRouter DeepInfra Turbo, paired image crops) or backend='sam3' (concept segmentation).
 Write where concepts appeared / disappeared / changed to your workspace. Results are change
 CANDIDATES for review, not conclusions — inspect them against the imagery
 before reporting anything.
@@ -310,7 +310,7 @@ def _run_change_detect_params(workspace_id: str, params: dict) -> dict:
         min_area_m2=params.get("min_area_m2"),
         method=params.get("method"),
         gsd=params.get("gsd"),
-        backend=params.get("backend", "sam3"),
+        backend=params.get("backend", "gemma"),
     )
 
 

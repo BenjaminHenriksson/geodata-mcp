@@ -237,8 +237,8 @@ def analyze(op: str, id: str | None = None, params: dict | None = None,
     - op='cancel' {job_id}: cancel a QUEUED job. A running job cannot be interrupted —
       it finishes or errors on its own.
 
-    First processor: 'change_detect' — SAM3 orthophoto change detection between two
-    imagery vintages. Start with op='list'.
+    First processor: 'change_detect' — orthophoto change detection between two
+    imagery vintages, using Gemma by default or explicit backend='sam3'. Start with op='list'.
     workspace_id: optional owned workspace UUID for this call; does not switch the default.
     """
     try:

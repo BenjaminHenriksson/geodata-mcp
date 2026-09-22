@@ -106,7 +106,7 @@ The server exposes eight tools:
 | `query` | read-only SQL as `agent_ro` (PostGIS + pgvector, 15 s timeout, 1000-row cap); every call is logged with a `query_id` and its referenced tables |
 | `layer` | the only write path: CTAS into the selected workspace, per-row updates, and style/notes; every op appends to the append-only `app.provenance` ledger |
 | `map` | upsert a renderer-agnostic map view and return a capability URL rendered by MapLibre or Origo; open pages pick up changes within ~5 s via ETag polling |
-| `analyze` | registry of long-running analysis processors (`list`/`describe`/`run`/`status`/`cancel`); results land as workspace layers (orthophoto change detection supports `params.backend="sam3"` or `"gemma"`) |
+| `analyze` | registry of long-running analysis processors (`list`/`describe`/`run`/`status`/`cancel`); results land as workspace layers (orthophoto change detection defaults to `params.backend="gemma"`; select `"sam3"` for SAM3) |
 | `export` | GPKG/GeoJSON/CSV/Parquet via ogr2ogr to a presigned URL, with a citation sidecar; `export(job_id=...)` retrieves existing output without creating another job |
 
 See [`../README.md`](../README.md) for the architecture, and [`../CONTRACTS.md`](../CONTRACTS.md) for the binding

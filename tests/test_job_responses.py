@@ -130,8 +130,8 @@ def test_analysis_job_response(monkeypatch, status):
         "error": "detail",
         **(
             {
-                "note": "SAM3 inference typically runs minutes (the first call also loads "
-                "the model) — poll with analyze(op='status', job_id=...)"
+                "note": "Gemma compares paired image crops through OpenRouter; results are approximate "
+                "bounding boxes, not segmented footprints — poll with analyze(op='status', job_id=...)"
             }
             if status in ("queued", "running")
             else {}

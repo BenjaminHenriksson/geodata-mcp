@@ -19,8 +19,12 @@ WINDOW = {"tile_id": "r0c0", "ulx": 619650, "uly": 6922150,
           "lrx": 619850, "lry": 6921950}
 
 
-@pytest.mark.parametrize("backend,method", [("sam3", "mask_compare"), ("gemma", "vision_compare")])
-def test_backend_enqueued_with_matching_method(monkeypatch, backend, method):
+@pytest.mark.parametrize("params,backend,method", [
+    ({}, "gemma", "vision_compare"),
+    ({"backend": "sam3"}, "sam3", "mask_compare"),
+    ({"backend": "gemma"}, "gemma", "vision_compare"),
+])
+def test_backend_enqueued_with_matching_method(monkeypatch, params, backend, method):
     conn = MagicMock()
     conn.execute.return_value.fetchone.side_effect = [
         ("wms",), ("wms",), (None,), (None,), ("POLYGON EMPTY",), (False, 2, .01)]
@@ -33,7 +37,7 @@ def test_backend_enqueued_with_matching_method(monkeypatch, backend, method):
     monkeypatch.setattr(analysis_ops.job_ops, "submit", submit)
     result = analysis_ops.run("workspace", "change_detect", {
         "area": "0,0,100,100", "concepts": ["building"], "collection_a": "before",
-        "collection_b": "after", "table_name": "changes", "backend": backend})
+        "collection_b": "after", "table_name": "changes", **params})
     assert result == {"job_id": 42}
     payload = submit.call_args.args[1]
     assert payload["backend"] == backend and payload["method"] == method

@@ -397,7 +397,7 @@ def _mask_polygons(mask_b64: str, w: dict, srs_wkt: str) -> list:
 
 def _infer(sam3_url: str, windows: list, items_by_tag: dict, sources_by_tag: dict,
            concepts: list, threshold: float, statuses: dict, prefix: str,
-           backend="sam3", gemma_config=None, collections=None):
+           *, backend, gemma_config=None, collections=None):
     """Per-window inference over both vintages (STAC → VRT windowed reads,
     WMS → per-window GetMap). Mutates statuses; returns (detection rows for
     the temp table, model info from the segmenter)."""
@@ -741,7 +741,7 @@ def change_detect(conn, job) -> dict:
     collection_a = payload["collection_a"]
     collection_b = payload["collection_b"]
     threshold = float(payload.get("threshold") or 0.5)
-    backend = payload.get("backend", "sam3")
+    backend = payload.get("backend", "gemma")
     if backend not in ("sam3", "gemma"):
         raise RuntimeError("backend must be 'sam3' or 'gemma'")
     expected_method = "vision_compare" if backend == "gemma" else "mask_compare"
