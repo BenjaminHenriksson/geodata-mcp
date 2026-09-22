@@ -12,8 +12,7 @@ bit the old load(op='change_detect') English-only concepts note).
 
 Processors return workspace-scoped findings or layers. Spatial layers can be
 read with query, styled with layer and shown with map; document findings carry
-page/source references. Jobs ride the same app.jobs queue as ingest/harvest;
-kinds are unchanged (the worker is untouched by the tool-surface move).
+page/source references. Jobs ride the same app.jobs queue as ingest/harvest.
 """
 
 from psycopg import sql as pgsql
@@ -371,7 +370,8 @@ def run(workspace_id: str, processor_id: str | None, params: dict | None) -> dic
 
 
 def status(job_id, timeout_s: float | None = None, workspace_id=None) -> dict:
-    out = job_ops.status(job_id, timeout_s, workspace_id=workspace_id)
+    out = job_ops.status(job_id, 25 if timeout_s is None else timeout_s,
+                         workspace_id=workspace_id)
     if "error" in out and "status" not in out:
         return out
     job = out

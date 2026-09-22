@@ -8,6 +8,7 @@ durable, named workspaces (see sessions.py) — reconnects land in the same work
 import sys
 import threading
 import time
+from typing import Literal
 
 import anyio.to_thread
 import uvicorn
@@ -219,12 +220,14 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
 
 @mcp.tool()
 @audit.tool(_ws)
-def analyze(op: str, id: str | None = None, params: dict | None = None,
+def analyze(op: Literal["list", "describe", "run", "status", "cancel"],
+            id: str | None = None, params: dict | None = None,
             job_id: int | None = None, timeout_s: float | None = None,
             ctx: Context = None, workspace_id: str | None = None) -> dict:
     """Inspect PDFs, scanned documents and images, or run geospatial image analysis.
 
-    inspect reads a public PDF/image URL with Gemma and returns per-page findings,
+    Use op='run', id='inspect', params={'url': ..., 'question': ...} to inspect
+    a public PDF/image URL with Gemma and return per-page findings,
     OCR/visual evidence and source links. Use it to examine documents/images found
     through internet search. change_detect writes spatial layers — read with query,
     style with layer, show with map. Both persist results in workspace-scoped jobs.
@@ -236,7 +239,8 @@ def analyze(op: str, id: str | None = None, params: dict | None = None,
     - op='run' {id, params}: start it; returns {job_id, status} (waits up to 8 s, so
       fast jobs come back finished). Runs typically take minutes.
     - op='status' {job_id, timeout_s?}: the job row (status queued|running|done|error|
-      cancelled, result, error). timeout_s>0 long-polls up to 25 s. When done, the
+      cancelled, result, error). Waits up to 25 s by default to avoid rapid polling;
+      timeout_s=0 returns immediately. When done, the
       result contains document findings or names the layers written.
     - op='cancel' {job_id}: cancel a QUEUED job. A running job cannot be interrupted —
       it finishes or errors on its own.

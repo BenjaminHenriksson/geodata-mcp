@@ -9,7 +9,7 @@ def run(workspace_id, params):
     except ValueError as exc:
         return {"error": str(exc)}
     return job_ops.submit("inspect", payload, workspace_id,
-                          "inspection running — poll analyze(op='status', job_id=...)")
+                          "inspection running — wait with analyze(op='status', job_id=..., timeout_s=25)")
 
 
 PROCESSOR = {

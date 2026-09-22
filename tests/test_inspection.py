@@ -142,6 +142,14 @@ def test_inspection_discovery_and_workspace_submission(monkeypatch):
     assert submit.call_args.args[2] == "owned"
 
 
+@pytest.mark.parametrize("timeout, expected", [(None, 25), (0, 0), (12, 12)])
+def test_analysis_status_waits_without_overriding_explicit_timeout(monkeypatch, timeout, expected):
+    status = Mock(return_value={"status": "running"})
+    monkeypatch.setattr(analysis_ops.job_ops, "status", status)
+    assert analysis_ops.status(8, timeout, workspace_id="owned") == {"status": "running"}
+    status.assert_called_once_with(8, expected, workspace_id="owned")
+
+
 @pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.1", "100.64.0.9", "169.254.169.254", "::1"])
 def test_public_download_rejects_internal_addresses(monkeypatch, tmp_path, address):
     monkeypatch.setattr(public_download.socket, "getaddrinfo", lambda *a, **kw: [(2, 1, 6, "", (address, 443))])
