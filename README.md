@@ -177,7 +177,7 @@ Run the local regression suite without services or credentials:
 
 ```sh
 uv venv
-uv pip install -e . -r services/mcp/requirements.txt -r services/viewer/requirements.txt pytest
+uv pip install -r requirements-test.txt
 .venv/bin/python -m pytest -q tests
 ```
 

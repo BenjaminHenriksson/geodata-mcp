@@ -1,0 +1,13 @@
+# Shared regression environment for CI and local development.
+-e .
+-r services/mcp/requirements.txt
+-r services/viewer/requirements.txt
+
+# Match worker dependency versions without installing its model inference stack.
+-c services/worker/requirements.txt
+pdfplumber
+Pillow
+pypdfium2
+
+pytest>=8,<10
+reportlab>=4,<5
