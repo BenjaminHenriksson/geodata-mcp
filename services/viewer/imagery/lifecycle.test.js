@@ -14,16 +14,16 @@ class Element {
 test('photo routes attach while basemap tiles are pending and unload after leaving',async()=>{
   const names=['document','Option','maplibregl','fetch'];
   const original=Object.fromEntries(names.map(name=>[name,globalThis[name]]));
-  const markers=[], requests=[], events=new Map(), sources=new Map(), layers=[];
+  const markers=[], requests=[], events=new Map(), sources=new Map(), layers=[], flights=[], container=new Element('map');
   let bounds=[18,59.3,18.1,59.4];
   const map={
-    getContainer:()=>new Element('map'),
+    getContainer:()=>container,
     getStyle:()=>({layers}), isStyleLoaded:()=>false,
     getBounds:()=>({getWest:()=>bounds[0],getSouth:()=>bounds[1],getEast:()=>bounds[2],getNorth:()=>bounds[3]}),
     getZoom:()=>16,
     getSource:id=>sources.get(id),addSource(id,source){sources.set(id,{...source,setData(value){this.data=value;}});},
     getLayer:id=>layers.find(layer=>layer.id===id),addLayer(layer){layers.push(layer);},
-    on(name,fn){events.set(name,fn);},flyTo(){},
+    on(name,fn){events.set(name,fn);},flyTo(pose){flights.push(pose);},
   };
   try{
     globalThis.document={hidden:false,createElement:tag=>new Element(tag),addEventListener(){},removeEventListener(){}};
@@ -45,6 +45,9 @@ test('photo routes attach while basemap tiles are pending and unload after leavi
     assert.match(photos[0].element.getAttribute('aria-label'),/Ön: öppna gatubild 1, 2026-09-21/);
     assert.match(photos[1].element.getAttribute('aria-label'),/gatubild 2/);
     assert.equal(sources.get('demo-imagery-routes').data.features.length,3);
+    const select=container.children[0].children[1];
+    for(let i=0;i<2;i++){select.value='island';select.onchange();assert.equal(select.value,'');}
+    assert.equal(flights.length,2,'the same location can be chosen again without another intermediate choice');
     bounds=[17.1,62.3,17.5,62.5];events.get('moveend')();
     assert.ok(photos.every(marker=>marker.removed));
     assert.equal(sources.get('demo-imagery-routes').data.features.length,0);

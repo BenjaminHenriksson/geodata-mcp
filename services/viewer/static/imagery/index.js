@@ -44,7 +44,7 @@ export async function attachImagery(map, viewId) {
   function navigate(step){if(!current)return;const all=routes.get(current.site.id).frames;const frame=all[all.indexOf(current.frame)+step];if(frame)openPanorama(current.site,frame);}
   function closePanorama(){panel.hidden=true;pano?.dispose();pano=null;current=null;}
   function escape(event){if(event.key==='Escape')closePanorama();}document.addEventListener('keydown',escape);
-  select.onchange=()=>{const site=sites.find(s=>s.id===select.value);if(site){closePanorama();map.flyTo({...site.overview,duration:1200});}};
+  select.onchange=()=>{const site=sites.find(s=>s.id===select.value);if(site){closePanorama();map.flyTo({...site.overview,duration:1200});select.value='';}};
   const siteMarkers=sites.map(site=>{
     const element=document.createElement('button');element.type='button';element.className='imagery-site';element.textContent=`${site.label} · 3D/360°`;
     element.onclick=()=>{select.value=site.id;select.onchange();};
