@@ -26,6 +26,8 @@ def inspect_document(conn, job):
         # Inspection answers carry evidence. Full OCR belongs in searchable ingestion;
         # avoid duplicating the entire page alongside each answer in chat context.
         page.pop("text")
+        page.pop("text_method")
+        page["method"] = "gemma_vision"
     result.update(result_type="inspection", source_url=params["url"], resolved_url=resolved,
                   source_sha256=digest, bytes=size, question=params["question"],
                   note="Findings are model interpretations. Cite the page source URLs; use load to index the document for later search.")

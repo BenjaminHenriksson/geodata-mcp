@@ -121,9 +121,10 @@ Return JSON with these exact keys:
 "answer": your answer about this page.
 "evidence": array of exact visible quotations or concrete visual observations.
 "uncertainties": array of ambiguities, illegible parts or limitations (empty if none).
-"text": {"faithful full transcription in the original language, tables as Markdown, [illegible] where needed, empty only if no text is visible" if ocr else "empty string (native text has already been extracted)"}.
+Transcribe the entire page only if the question asks for it; otherwise include the
+text relevant to the question in your answer and evidence.
 """
-    fields = ("text", "answer") if question is not None else ("text",)
+    fields = ("answer",) if question is not None else ("text",)
     lists = ("uncertainties", "evidence") if question is not None else ("uncertainties",)
     request = gemma_api.vision_request(prompt, png)
     request["response_format"] = {"type": "json_schema", "json_schema": {
@@ -141,7 +142,7 @@ Return JSON with these exact keys:
         raise RuntimeError(f"Gemma returned an incomplete or invalid response for page {page['page']}; no successful extraction was recorded")
     if question is not None and not data["answer"].strip():
         raise RuntimeError(f"Gemma returned no answer for page {page['page']}")
-    result = {**page, "text": data["text"] if ocr else page["text"],
+    result = {**page, "text": data["text"] if ocr and question is None else page["text"],
               "uncertainties": data["uncertainties"]}
     if question is not None:
         result.update(answer=data["answer"], evidence=data["evidence"])

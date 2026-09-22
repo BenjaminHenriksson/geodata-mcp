@@ -37,8 +37,9 @@ def model_reply(request):
     parts = request["messages"][0]["content"]
     assert parts[1]["image_url"]["detail"] == "high"
     assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
-    return {"text": "Byggstart 2019. Invigning 2022.", "answer": "Bygget startade 2019.",
-            "evidence": ["Byggstart 2019"], "uncertainties": []}, {"prompt_tokens": 100, "completion_tokens": 30, "cost": .001}
+    values = {"text": "Byggstart 2019. Invigning 2022.", "answer": "Bygget startade 2019.",
+              "evidence": ["Byggstart 2019"], "uncertainties": []}
+    return {key: values[key] for key in schema["schema"]["required"]}, {"prompt_tokens": 100, "completion_tokens": 30, "cost": .001}
 
 
 def test_scanned_pages_use_ocr_and_native_pages_do_not(monkeypatch, mixed_pdf):
