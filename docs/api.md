@@ -62,7 +62,7 @@ All map/data endpoints are protected by **capability URLs**: a valid, unguessabl
 | GET | `/v/{view_id}` | interactive map page (`?renderer=maplibre\|origo`) |
 | GET | `/v/{view_id}/style.json` | MapLibre GL style (ETag conditional GET) |
 | GET | `/v/{view_id}/origo.json` | Origo/OpenLayers configuration |
-| GET | `/data/{layer}.geojson` | layer as GeoJSON (`view`, `crs`, `limit`) |
+| GET | `/data/{layer}.geojson` | layer as GeoJSON (`view`, `crs`, per-page `limit`, ordered `offset`, optional `properties` JSON array) |
 | GET | `/tiles/{layer}/{z}/{x}/{y}.mvt` | Mapbox Vector Tile (`view`) |
 | GET | `/wmsref/{dataset_id}` | server-side WMS GetMap proxy (`view` + WMS KVP) |
 | GET/POST | `/login`, `/logout` | workspace-manager sign in / out |

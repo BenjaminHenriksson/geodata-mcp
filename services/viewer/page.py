@@ -359,11 +359,13 @@ __HEADER__
 <div class="map-stage">
 <a class="skip-link" href="#app-wrapper">Hoppa till innehåll</a>
 <div id="app-wrapper" role="main" aria-label="Interaktiv kartvy" tabindex="-1"></div>
+<div id="load-status" role="status" aria-live="polite">Laddar kartan…</div>
 <details id="note"><summary>Lagerinformation</summary><div><span id="note-text"></span><br><button type="button" id="note-x">Stäng</button></div></details>
 <button id="reload" type="button">Visa uppdaterad karta</button>
 <div id="error" role="alert"><span id="error-message"></span><button id="retry" type="button">Ladda om</button></div>
 </div>
 <script nonce="__NONCE__" src="/static/origo/js/origo.min.js"></script>
+<script nonce="__NONCE__" src="/static/origo-data.js"></script>
 <script nonce="__NONCE__">
 (function () {
   "use strict";
@@ -403,8 +405,24 @@ __HEADER__
       var meta = cfg.geodata || {};
       revision = meta.revision;
       if (meta.title) { document.title = meta.title; document.getElementById("titlebar").textContent = meta.title; }
+      // Origo's built-in loader requests a single capped response and hides
+      // request errors. Give it empty sources, then load complete layers in pages.
+      var vectors = cfg.layers.filter(function (layer) { return layer.type === "GEOJSON"; })
+        .map(function (layer) { return Object.assign({}, layer); });
+      cfg.layers.forEach(function (layer) { if (layer.type === "GEOJSON") { layer.source = "none"; } });
       // Inline object: Origo uses it directly instead of refetching.
       window.origo = Origo(cfg, { svgSpritePath: "/static/origo/css/svg/", baseUrl: "/" });
+      window.origo.on("load", function () {
+        var status = document.getElementById("load-status");
+        GeodataOrigo.load(window.origo.api(), vectors, function (count, done) {
+          status.textContent = done ? count.toLocaleString("sv-SE") + " objekt laddade"
+            : "Laddar kartlager… " + count.toLocaleString("sv-SE") + " objekt";
+        }).catch(function () {
+          status.textContent = "Kartlagren kunde inte laddas klart. Kartan är ofullständig.";
+          document.getElementById("error-message").textContent = "Alla kartobjekt kunde inte hämtas.";
+          document.getElementById("error").style.display = "block";
+        });
+      });
       showNote(meta.note);
       document.getElementById("error").style.display = "none";
       setInterval(poll, POLL_MS);
@@ -429,6 +447,7 @@ __HEADER__
 
 MAP_CSS = """
 .map-stage #map,.map-stage #app-wrapper{position:absolute;inset:0;height:100%;width:100%}
+#load-status{position:absolute;left:12px;bottom:56px;z-index:11;background:white;border:1px solid var(--line);border-radius:4px;padding:6px 10px;max-width:calc(100% - 48px);font:12px/1.5 var(--font);pointer-events:none}
 .map-stage #inspector,.map-stage #legend,.map-stage #note,.map-stage #error{
 box-sizing:border-box;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);color:var(--ink);font:13px/1.5 var(--font)}
 #inspector{position:absolute;top:12px;right:12px;z-index:11;display:none;padding:12px;width:230px;max-width:calc(100% - 74px)}

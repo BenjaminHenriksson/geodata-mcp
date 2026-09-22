@@ -1,16 +1,12 @@
 """Viewer service: map pages, MapLibre/Origo compilation, GeoJSON + MVT endpoints,
 and the auth-gated workspace manager UI."""
+import json
 import logging
 import os
 import secrets
-from uuid import UUID
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
-
-import httpx
-from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from fastapi.staticfiles import StaticFiles
+from uuid import UUID
 
 import api_docs as api
 import architecture_page
@@ -19,11 +15,16 @@ import compile_origo
 import dashboard_data
 import dashboard_page
 import dbq
-from geodata_common import netauth
+import httpx
 import obs
 import page
 import service_admin
 import viewer_auth
+from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+
+from geodata_common import netauth
 
 # Centralised observability (#81): structured JSON logs to stdout. Additive and
 # stdlib-only, so it never affects request handling. Configured at import time
@@ -477,17 +478,32 @@ def view_page(view_id: api.ViewId, request: Request, renderer: str = Query(defau
 def data_geojson(layer: api.LayerRef,
                  view: str | None = Query(default=None, description=api.VIEW_QUERY, examples=[api.VIEW_EXAMPLE]),
                  crs: int = Query(default=4326, description="4326 (WGS84) or 3014 (SWEREF 99 17 15); other values return 400"),
-                 limit: int = Query(default=DATA_DEFAULT_LIMIT, description="Max features, clamped to 1..50000")):
+                 limit: int = Query(default=DATA_DEFAULT_LIMIT, description="Max features per page, clamped to 1..50000"),
+                 offset: int | None = Query(default=None, ge=0, description="Offset for ordered GeoJSON pages; stop when fewer than limit features are returned."),
+                 properties: str | None = Query(default=None, max_length=20000, description="JSON array of property names to return; absent returns all, unknown names are ignored.")):
     """Capability-scoped GeoJSON; large geometries are simplified and a 15 s query timeout applies."""
     if crs not in (4326, 3014):
         raise HTTPException(status_code=400, detail="crs must be 4326 or 3014")
     limit = max(1, min(limit, DATA_MAX_LIMIT))
+    selected = None
+    if properties is not None:
+        try:
+            selected = json.loads(properties)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="properties must be a JSON array of strings") from None
+        if not isinstance(selected, list) or any(not isinstance(p, str) for p in selected):
+            raise HTTPException(status_code=400, detail="properties must be a JSON array of strings")
     with dbq.get_pool().connection() as conn:
         schema, table, props = _checked_layer(conn, layer, view)
+        order_by = "fid" if "fid" in props else "id" if "id" in props else None
+        if selected is not None:
+            requested = set(selected)
+            props = [p for p in props if p in requested]
         count = dbq.feature_count(conn, schema, table)
         simplify = count is not None and count > SIMPLIFY_THRESHOLD
+        paging = {"offset": offset, "order_by": order_by} if offset is not None else {}
         body = dbq.geojson_feature_collection(conn, schema, table, props,
-                                              crs, limit, simplify)
+                                              crs, limit, simplify, **paging)
     return Response(content=body, media_type="application/geo+json",
                     headers={"Cache-Control": "no-store"})
 

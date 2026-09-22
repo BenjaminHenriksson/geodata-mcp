@@ -1,10 +1,12 @@
 import copy
-
-import pytest
+import json
+from urllib.parse import parse_qs, urlsplit
 
 import compile_maplibre
 import compile_origo
 import dbq
+import pytest
+
 from geodata_common import netauth
 
 
@@ -129,3 +131,13 @@ def test_missing_layers_do_not_change_palette(render, monkeypatch):
     assert list(ml["sources"]) == ["basemap"]
     assert not ml["metadata"]["popups"]
     assert origo["layers"] == []
+
+
+def test_origo_requests_bounded_pages_with_popup_properties(render):
+    pair, _ = render
+    _, origo = pair({"ref": "ref.buildings", "popup": ["name", "fid", "name"]})
+    query = parse_qs(urlsplit(origo["layers"][0]["source"]).query)
+    assert query["view"] == ["test-view"]
+    assert query["limit"] == ["5000"]
+    assert query["crs"] == ["3014"]
+    assert json.loads(query["properties"][0]) == ["fid", "name"]

@@ -8,14 +8,24 @@ group 'root' (vectors) / 'background' (basemaps). Served at /v/<id>/origo.json a
 consumed by the interactive Origo page (page.origo_page).
 """
 import html
+import json
 import os
+from urllib.parse import urlencode
 
 import dbq
+from compile_common import (
+    CODE_VERSION,
+    DEFAULT_CIRCLE_RADIUS,
+    DEFAULT_FILL_OPACITY,
+    DEFAULT_LINE_WIDTH,
+    DEFAULT_PALETTE,
+    DEFAULT_POLYGON_OUTLINE_WIDTH,
+    DEFAULT_POLYGON_STROKE,
+    _num,
+    resolve_vector_layer,
+)
+
 from geodata_common import netauth
-from compile_common import (CODE_VERSION, DEFAULT_CIRCLE_RADIUS,
-                              DEFAULT_FILL_OPACITY, DEFAULT_LINE_WIDTH,
-                              DEFAULT_PALETTE, DEFAULT_POLYGON_OUTLINE_WIDTH,
-                              DEFAULT_POLYGON_STROKE, _num, resolve_vector_layer)
 
 PROJ4_3014 = ("+proj=tmerc +lat_0=0 +lon_0=17.25 +k=1 +x_0=150000 +y_0=0 "
               "+ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs")
@@ -223,7 +233,10 @@ def compile_origo(conn, view):
             "type": "GEOJSON",
             # Root-relative with query params: Origo fetches it verbatim. Served in
             # the native CRS; the explicit projection tells Origo what it is getting.
-            "source": f"/data/{ref}.geojson?view={view_id}&crs=3014",
+            "source": f"/data/{ref}.geojson?" + urlencode({
+                "view": view_id, "crs": 3014, "limit": 5000,
+                "properties": json.dumps(list(dict.fromkeys(["fid", *popup_attrs]))),
+            }),
             "projection": "EPSG:3014",
             "style": style_name,
             "visible": visible,       # Origo defaults visible to FALSE — always set it

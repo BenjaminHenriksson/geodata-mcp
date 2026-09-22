@@ -11,6 +11,7 @@ import uuid
 
 from psycopg import sql
 from psycopg_pool import ConnectionPool
+
 from geodata_common import workspaces
 
 activate_workspace = workspaces.activate
@@ -252,7 +253,8 @@ def transform_extent_to_4326(conn, ext):
     return [float(row[0]), float(row[1]), float(row[2]), float(row[3])]
 
 
-def geojson_feature_collection(conn, schema, table, props, crs, limit, simplify):
+def geojson_feature_collection(conn, schema, table, props, crs, limit, simplify,
+                               *, offset=None, order_by=None):
     """FeatureCollection JSON text for schema.table; props = non-geometry column names."""
     conn.execute("SET LOCAL statement_timeout = '15s'")
     items = [sql.SQL("t.{}").format(sql.Identifier(c)) for c in props]
@@ -262,14 +264,24 @@ def geojson_feature_collection(conn, schema, table, props, crs, limit, simplify)
     if crs == 4326:
         geom_expr = sql.SQL("ST_Transform({}, 4326)").format(geom_expr)
     items.append(sql.SQL("{} AS geom").format(geom_expr))
+    # Stable pages for ordinary imported/workspace tables (fid), also supporting
+    # views without a numeric ID by ordering their complete rows.
+    ordering = sql.SQL("")
+    paging = sql.SQL("")
+    params = [limit]
+    if offset is not None:
+        key = sql.SQL("t.{}").format(sql.Identifier(order_by)) if order_by else sql.SQL("t::text")
+        ordering = sql.SQL(" ORDER BY {}").format(key)
+        paging = sql.SQL(" OFFSET %s")
+        params.append(offset)
     query = sql.SQL(
-        "WITH src AS (SELECT {items} FROM {s}.{t} t WHERE t.{g} IS NOT NULL LIMIT {lim}) "
+        "WITH src AS (SELECT {items} FROM {s}.{t} t WHERE t.{g} IS NOT NULL{ordering} LIMIT {lim}{paging}) "
         "SELECT json_build_object('type', 'FeatureCollection', 'features', "
         "COALESCE(json_agg(ST_AsGeoJSON(src.*)::json), '[]'::json))::text FROM src").format(
         items=sql.SQL(", ").join(items),
         s=sql.Identifier(schema), t=sql.Identifier(table),
-        g=sql.Identifier("geom"), lim=sql.Placeholder())
-    row = conn.execute(query, (limit,)).fetchone()
+        g=sql.Identifier("geom"), lim=sql.Placeholder(), ordering=ordering, paging=paging)
+    row = conn.execute(query, params).fetchone()
     return row[0]
 
 
