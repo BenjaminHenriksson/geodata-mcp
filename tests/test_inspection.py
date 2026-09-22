@@ -165,7 +165,10 @@ def test_image_transcription_returns_text_instead_of_visual_summary(monkeypatch)
 @pytest.mark.parametrize("params", [
     {"url": "file:///etc/passwd"}, {"url": "https://user:password@x.test/a"},
     {"url": "http://x.test:8100/image"}, {"url": "https://x.test/a", "pages": [True]},
-    {"url": "https://x.test/a", "pages": [0]}, {"url": "https://x.test/a", "question": ""},
+    {"url": "https://x.test/a", "pages": [0]},
+    {"url": "https://x.test/a", "pages": ["3.5"]},
+    {"url": "https://x.test/a", "pages": ["0"]},
+    {"url": "https://x.test/a", "pages": ["all"]}, {"url": "https://x.test/a", "question": ""},
     {"url": "https://x.test/a", "unknown": 1},
     {"url": "https://x.test/a", "mode": "summarize"},
     {"url": "https://x.test/a", "mode": "transcribe", "question": "What changed?"},
@@ -185,6 +188,10 @@ def test_inspection_discovery_and_workspace_submission(monkeypatch):
     assert analysis_ops.run("owned", "inspect", {"url": "https://x.test/a", "pages": [2, 1, 2]}) == {"job_id": 8}
     assert submit.call_args.args[1]["pages"] == [1, 2]
     assert submit.call_args.args[2] == "owned"
+    result = analysis_ops.run("owned", "inspect", {"url": "https://x.test/a",
+        "mode": "transcribe", "pages": ["3", 1, "3"]})
+    assert result == {"job_id": 8}
+    assert submit.call_args.args[1]["pages"] == [1, 3]
 
 
 @pytest.mark.parametrize("timeout, expected", [(None, 25), (0, 0), (12, 12)])

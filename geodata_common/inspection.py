@@ -30,6 +30,10 @@ def validate(params):
             raise ValueError("question must be non-empty text")
         question = question.strip()
     pages = params.get("pages")
+    if isinstance(pages, list):
+        # Some tool clients serialize numbers inside generic params as strings.
+        pages = [int(p) if isinstance(p, str) and p.isascii() and p.isdecimal() else p
+                 for p in pages]
     if pages is not None and (not isinstance(pages, list) or not pages or
                              any(type(p) is not int or p < 1 for p in pages)):
         raise ValueError("pages must be a non-empty list of 1-based page numbers")
