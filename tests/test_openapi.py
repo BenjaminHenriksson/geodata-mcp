@@ -20,6 +20,7 @@ def test_schema_covers_the_public_api_and_auth(client):
     paths = schema['paths']
     assert set(paths) == {'/', '/healthz', '/login', '/logout', '/workspaces', '/workspaces/action',
                           '/v/{view_id}', '/v/{view_id}/style.json', '/v/{view_id}/origo.json',
+                          '/v/{view_id}/traceability', '/v/{view_id}/feature-evidence',
                           '/data/{layer}.geojson', '/tiles/{layer}/{z}/{x}/{y}.mvt', '/wmsref/{dataset_id}',
                           '/dashboard', '/admin', '/admin/audit', '/admin/services',
                           '/admin/services/action', '/workspaces/{workspace_id}', '/architecture',
