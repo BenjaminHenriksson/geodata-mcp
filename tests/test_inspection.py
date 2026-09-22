@@ -118,6 +118,7 @@ def test_image_inspection_returns_citations_and_provenance(monkeypatch, tmp_path
     assert result["result_type"] == "inspection" and result["format"] == "image"
     assert result["pages"][0]["source_url"] == "https://example.test/picture.png"
     assert "text" not in result["pages"][0]
+    assert result["pages"][0]["method"] == "vision_answer"
     assert len(result["source_sha256"]) == 64
     assert provenance.call_args.kwargs["workspace_id"] == "owned-workspace"
 

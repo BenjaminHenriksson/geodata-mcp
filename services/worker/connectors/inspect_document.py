@@ -27,7 +27,7 @@ def inspect_document(conn, job):
             # Answers carry evidence; transcription mode returns the full page text.
             page.pop("text")
             page.pop("text_method")
-            page["method"] = "vision_vision"
+            page["method"] = "vision_answer"
     transcribe = params["mode"] == "transcribe"
     result.update(result_type="transcription" if transcribe else "inspection",
                   mode=params["mode"], source_url=params["url"], resolved_url=resolved,

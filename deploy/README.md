@@ -6,7 +6,8 @@ From the repository root:
 
 ```sh
 cp .env.example .env
-# Replace placeholders; set PUBLIC_BASE_URL and S3_PUBLIC_ENDPOINT.
+# Replace placeholders; set PUBLIC_BASE_URL, S3_PUBLIC_ENDPOINT and EMBED_MODEL.
+# Configure VISION_BASE_URL and VISION_MODEL for image analysis/OCR.
 docker compose up -d --build
 docker compose ps
 docker compose logs --tail=100 mcp viewer worker
@@ -15,7 +16,8 @@ docker compose logs --tail=100 mcp viewer worker
 The stack contains PostgreSQL/PostGIS, MinIO, MCP, viewer, worker and Caddy.
 Caddy routes `/mcp`, OAuth and discovery to MCP, and other requests to the
 viewer. Source credentials belong in the environment, never the catalog.
-SAM3 runs separately; configure `SAM3_URL` when using change detection.
+SAM3 runs separately; configure `SAM3_URL` when selecting its segmentation backend.
+The default vision backend uses the worker's `VISION_*` settings from `.env.example`.
 
 The reference Compose file publishes Caddy on port 8080. Bind the proxy to
 loopback or the tailnet interface for a private deployment. PostgreSQL and
