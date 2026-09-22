@@ -2,6 +2,10 @@
 .venv
 .env
 **/__pycache__
+**/node_modules
+services/viewer/static/imagery-build
+services/viewer/static/maplibre-gl.js
+services/viewer/static/maplibre-gl.css
 **/*.pyc
 .pytest_cache
 .ruff_cache

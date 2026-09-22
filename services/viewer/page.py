@@ -9,6 +9,7 @@ _MAPLIBRE_PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kartvy</title>
 <link rel="stylesheet" href="/static/maplibre-gl.css">
+<link rel="stylesheet" href="/static/imagery/style.css">
 <style>__UI_CSS__
 __MAP_CSS__</style>
 </head>
@@ -299,6 +300,8 @@ __HEADER__
       locale: {"NavigationControl.ZoomIn": "Zooma in", "NavigationControl.ZoomOut": "Zooma ut",
                "NavigationControl.ResetBearing": "Återställ norriktning", "Popup.Close": "Stäng"} });
     window.__map = map;  // debugging handle (harmless; capability URL is the access control)
+    import("/static/imagery/index.js").then(function (module) { return module.attachImagery(map, VIEW_ID); })
+      .catch(function (error) { console.warn("Imagery catalogue:", error.message); });
     map.on("error", function (e) {
       if (e && e.error) { console.warn("maplibre error:", e.error.message || e.error); }
     });

@@ -1,3 +1,10 @@
+FROM node:22-slim AS imagery-build
+WORKDIR /src/services/viewer/imagery
+COPY services/viewer/imagery/package*.json ./
+RUN npm ci --ignore-scripts
+COPY services/viewer/imagery/ ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -10,7 +17,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY services/viewer/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY --from=ghcr.io/astral-sh/uv:0.10.12 /uv /usr/local/bin/uv
+RUN uv venv /app/.venv && uv pip install --python /app/.venv/bin/python -r /app/requirements.txt
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Vendor MapLibre GL JS at build time; no CDN references at runtime.
 RUN mkdir -p /app/static \
@@ -30,6 +39,7 @@ RUN mkdir -p /app/static/origo \
 
 COPY services/viewer/*.py /app/
 COPY services/viewer/static/ /app/static/
+COPY --from=imagery-build /src/services/viewer/static/imagery-build/ /app/static/imagery-build/
 
 COPY geodata_common /app/geodata_common
 

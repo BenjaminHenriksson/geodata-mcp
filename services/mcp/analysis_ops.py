@@ -19,6 +19,7 @@ from psycopg import sql as pgsql
 
 import db
 import job_ops
+import imagery_ops
 import inspection_ops
 import sessions
 import sqlguard
@@ -319,6 +320,7 @@ def _run_change_detect_params(workspace_id: str, params: dict) -> dict:
 
 REGISTRY = {
     "inspect": inspection_ops.PROCESSOR,
+    "imagery": imagery_ops.PROCESSOR,
     "change_detect": {
         "title": "Orthophoto change detection (SAM3 or Vision)",
         "summary": "Where did concepts appear/disappear/change between two imagery "

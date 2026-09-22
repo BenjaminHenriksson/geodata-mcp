@@ -16,6 +16,7 @@ import dashboard_data
 import dashboard_page
 import dbq
 import httpx
+import imagery_routes
 import obs
 import page
 import service_admin
@@ -129,6 +130,14 @@ def _load_view(conn, view_id, status=404):
     if view is None:
         raise HTTPException(status_code=status, detail="unknown view")
     return view
+
+
+def _require_imagery_view(view_id):
+    with dbq.get_pool().connection() as conn:
+        _load_view(conn, view_id)
+
+
+imagery_routes.register(app, _require_imagery_view)
 
 
 def _vector_refs(spec):

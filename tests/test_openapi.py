@@ -22,7 +22,11 @@ def test_schema_covers_the_public_api_and_auth(client):
                           '/v/{view_id}', '/v/{view_id}/style.json', '/v/{view_id}/origo.json',
                           '/data/{layer}.geojson', '/tiles/{layer}/{z}/{x}/{y}.mvt', '/wmsref/{dataset_id}',
                           '/dashboard', '/admin', '/admin/audit', '/admin/services',
-                          '/admin/services/action', '/workspaces/{workspace_id}', '/architecture'}
+                          '/admin/services/action', '/workspaces/{workspace_id}', '/architecture',
+                          '/v/{view_id}/imagery/catalogue', '/v/{view_id}/imagery/basemap/{kind}/{z}/{x}/{y}.png', '/v/{view_id}/imagery/{site_id}/route',
+                          '/v/{view_id}/imagery/{site_id}/scene', '/v/{view_id}/imagery/{site_id}/splat/{asset}',
+                          '/v/{view_id}/imagery/{site_id}/panorama/{frame_id}',
+                          '/v/{view_id}/imagery/{site_id}/perspective/{frame_id}.jpg'}
     assert schema['components']['securitySchemes']['managerCookie']['name'] == 'gdw_auth'
     assert paths['/workspaces']['get']['security'] == [{'managerCookie': []}]
     assert paths['/architecture']['get']['security'] == [{'managerCookie': []}]

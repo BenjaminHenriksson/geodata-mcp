@@ -20,6 +20,7 @@ import analysis_ops
 import audit
 import config
 import export_ops
+import imagery_ops
 import layer_ops
 import load_ops
 import map_ops
@@ -27,6 +28,7 @@ import oauth
 import query_ops
 import search_ops
 import sessions
+from tool_images import with_image_content
 import workspace_ops
 
 # Stateful streamable HTTP: the server issues mcp-session-id on initialize and clients
@@ -219,6 +221,7 @@ def load(op: str, kind: str | None = None, url: str | None = None, title: str | 
 
 
 @mcp.tool()
+@with_image_content
 @audit.tool(_ws)
 def analyze(op: Literal["list", "describe", "run", "status", "cancel"],
             id: str | None = None, params: dict | None = None,
@@ -247,6 +250,10 @@ def analyze(op: Literal["list", "describe", "run", "status", "cancel"],
     - op='cancel' {job_id}: cancel a QUEUED job. A running job cannot be interrupted —
       it finishes or errors on its own.
 
+    'imagery': discover georeferenced 360 photo locations and render perspective
+    views. A view returns an actual image content block with camera and ray metadata;
+    an uncalibrated panorama heading does not establish a geographic viewing bearing
+    or ground position. Describe this processor before using its operations.
     'inspect': PDF/image URL + mode (transcribe|answer), optional question/pages. 'change_detect': orthophoto
     change detection using Vision by default or explicit backend='sam3'. Start with op='list'.
     workspace_id: optional owned workspace UUID for this call; does not switch the default.
@@ -258,7 +265,10 @@ def analyze(op: Literal["list", "describe", "run", "status", "cancel"],
         if op == "describe":
             return analysis_ops.describe(id)
         if op == "run":
-            return analysis_ops.run(w.id, id, params)
+            result = analysis_ops.run(w.id, id, params)
+            if isinstance(result, imagery_ops.PerspectiveResult):
+                return {**result.metadata, "_perspective_image": result.image}
+            return result
         if op == "status":
             if job_id is None:
                 return {"error": "status needs job_id"}

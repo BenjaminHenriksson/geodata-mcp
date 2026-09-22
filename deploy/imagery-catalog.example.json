@@ -1,0 +1,137 @@
+{
+  "sites": [
+    {
+      "id": "gubbangen",
+      "label": "Gubb\u00e4ngen",
+      "origin": [
+        18.086333288,
+        59.2678144246
+      ],
+      "altitude": 120,
+      "overview": {
+        "center": [
+          18.089,
+          59.2587
+        ],
+        "zoom": 14.6,
+        "pitch": 60,
+        "bearing": -17
+      },
+      "georeference": [
+        0.999339715011,
+        -0.000450839425,
+        -0.000435959946,
+        0,
+        0.000452159953,
+        0.999335210949,
+        0.003031670189,
+        0,
+        0.000434590196,
+        -0.003031866846,
+        0.999335218148,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "sogToLocal": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        -1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "published": true,
+      "bounds": [
+        18.023004249805126,
+        59.24279770769174,
+        18.139397605133667,
+        59.28153317804128
+      ],
+      "manifest": "/data/imagery/gubbangen/manifest.json",
+      "preview_roots": {
+        "preview": "/data/imagery/gubbangen/preview",
+        "webframes": "/data/imagery/gubbangen/webframes"
+      },
+      "splat_root": "/data/imagery/gubbangen/sog"
+    },
+    {
+      "id": "skeppsholmen",
+      "label": "Skeppsholmen\u2013Kastellholmen",
+      "origin": [
+        18.0876085277778,
+        59.3235538611111
+      ],
+      "altitude": 131.96734194876993,
+      "overview": {
+        "center": [
+          18.0868,
+          59.3246
+        ],
+        "zoom": 15.7,
+        "pitch": 55,
+        "bearing": -20
+      },
+      "georeference": [
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        1
+      ],
+      "sogToLocal": [
+        10.951922994767097,
+        71.80512978771472,
+        -30.9059643215169,
+        -33.56550333791107,
+        73.25689106995273,
+        -20.32020807686137,
+        -21.251281519825504,
+        24.51514163346499,
+        -27.28705197045867,
+        -25.733487747276726,
+        -69.45721211565427,
+        -1.4079585566731005,
+        0,
+        0,
+        0,
+        1
+      ],
+      "published": true,
+      "bounds": [
+        18.077199331442472,
+        59.32034220479462,
+        18.09425558597954,
+        59.329126046137915
+      ],
+      "manifest": "/data/imagery/skeppsholmen/manifest.json",
+      "preview_roots": {
+        "preview": "/data/imagery/skeppsholmen/preview"
+      },
+      "splat_root": "/data/imagery/skeppsholmen/sog"
+    }
+  ]
+}

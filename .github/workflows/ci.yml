@@ -62,6 +62,9 @@ jobs:
           node-version: '22'
       - name: Verify progressive map loading
         run: node --test tests/origo-data.test.cjs
+      - name: Verify panorama projection and scene loading
+        working-directory: services/viewer/imagery
+        run: npm ci --ignore-scripts && npm test && npm run build
       - name: Generate API reference from routes
         run: .venv/bin/python scripts/dump_openapi.py
       - uses: actions/upload-artifact@v4
